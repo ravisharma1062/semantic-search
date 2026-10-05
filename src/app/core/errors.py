@@ -29,6 +29,12 @@ class AppError(Exception):
         super().__init__(self.message)
 
 
+class NonRetryableError(AppError):
+    """A processing error that retrying cannot fix. The message goes straight to the DLQ."""
+
+    default_message = "Non-retryable processing error"
+
+
 class InvalidRequestError(AppError):
     """Bad input or unknown filter."""
 

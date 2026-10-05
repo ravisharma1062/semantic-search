@@ -44,12 +44,12 @@ T3 and T4 can run in parallel after T2 if there are enough engineers.
   - Dockerfile builds a non-root image. A basic Helm chart exists with `api`, `worker` and `batch` modes.
   - `docker compose` starts Elasticsearch, Kafka, Redis and a fake model server locally.
   - A fakes package exists in `tests/fakes` with fake `Embedder`, `Reranker`, `LLMClient`, `SourceReader`.
-- **Scope decisions** (see `docs/decisions/0001-skeleton.md`): CI is GitHub Actions. The Helm chart has no HPA, KEDA, PodDisruptionBudget, anti-affinity or NetworkPolicy (moved to T5.5). There are no integration tests yet. The retry helper in `core` is deferred to T1.2.
+- **Scope decisions** (see `docs/decisions/0001-skeleton.md`): CI is GitHub Actions. The Helm chart has no HPA, KEDA, PodDisruptionBudget, anti-affinity or NetworkPolicy (moved to T5.5). There are no integration tests yet. The retry helper in `core` was deferred to T1.2 and is done there.
 
 ### T1.2 Kafka consumer framework (8-10 days)
 - **Goal:** A reusable consumer with safe commit, retry, retry topic and DLQ.
 - **Depends on:** T1.1.
-- **Also here (moved from T1.1):** add the shared retry helper in `core` (needs `tenacity`, rule 8). Remove the "no tests collected" tolerance from the integration step in `.github/workflows/ci.yml`. Replace the idle worker stub in `app/modes.py` and add a worker probe to the Helm chart.
+- **Done in T1.2 (moved from T1.1):** the shared retry helper in `core/retry.py`, and the CI integration step no longer tolerates "no tests collected". The worker mode stays an idle stub until T1.6, because a consumer with no real handler would commit events without indexing them. T1.6 wires it and adds the worker probe to the Helm chart.
 - **Done when:**
   - Event schema v1 (`UPSERT`, `DELETE`, `ACL_CHANGE`) is validated with Pydantic. Bad messages go to the DLQ with the error.
   - Offsets are committed only after the handler succeeds.

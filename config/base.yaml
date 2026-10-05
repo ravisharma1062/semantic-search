@@ -10,6 +10,7 @@ kafka:
   retry_topic: doc-index-retry
   dlq_topic: doc-index-dlq
   consumer_group: semantic-indexer
+  backfill_consumer_group: semantic-indexer-backfill
 embedding:
   provider: inhouse
   model: bge-m3
