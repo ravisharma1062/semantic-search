@@ -30,10 +30,12 @@ api:
     requests: {cpu: "1", memory: 2Gi}
     limits: {cpu: "2", memory: 4Gi}
 
-# The worker is an idle stub until task T1.2, so it has no probes yet.
+# The worker has no HTTP port. It touches a heartbeat file, and the liveness probe checks its age.
 worker:
   enabled: true
   replicaCount: 2
+  heartbeatFile: /tmp/worker-alive  # must match APP_INGESTION__HEARTBEAT_FILE
+  heartbeatMaxAgeSeconds: 60
   resources:
     requests: {cpu: "2", memory: 4Gi}
     limits: {cpu: "2", memory: 4Gi}

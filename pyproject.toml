@@ -55,7 +55,7 @@ exclude = ["*.md"]
 select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "SIM", "S", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]
+"tests/**" = ["S101", "E501"]
 
 [tool.mypy]
 strict = true

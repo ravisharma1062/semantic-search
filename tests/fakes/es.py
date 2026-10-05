@@ -3,7 +3,7 @@
 from typing import Any, Self
 
 from elastic_transport import ApiResponseMeta, HttpHeaders, NodeConfig, ObjectApiResponse
-from elasticsearch import ApiError, AsyncElasticsearch, NotFoundError
+from elasticsearch import ApiError, AsyncElasticsearch, ConflictError, NotFoundError
 
 
 def meta(status: int = 200) -> ApiResponseMeta:
@@ -85,3 +85,113 @@ class FakeElasticsearch:
     def as_client(self) -> AsyncElasticsearch:
         """For code that is typed against the real client."""
         return self  # type: ignore[return-value]
+
+
+class FakeWriteEs:
+    """Fake client for the state store, the indexer and the alias tools.
+
+    Keeps documents with sequence numbers (optimistic concurrency), scripted bulk answers, and
+    records every call. Queued errors are raised first.
+    """
+
+    def __init__(self) -> None:
+        self.docs: dict[str, dict[str, Any]] = {}
+        self.seq: dict[str, int] = {}
+        self.errors: list[Exception] = []
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.timeouts: list[Any] = []
+        self.bulk_answers: list[dict[str, Any]] = []
+        self.before_write: Any = None  # a hook that runs just before an index call
+        self.by_query_conflicts = 0
+        self._next_seq = 0
+        self.indices = self
+
+    def options(self, **kwargs: Any) -> Self:
+        """Records per-call options."""
+        self.timeouts.append(kwargs.get("request_timeout"))
+        return self
+
+    def _fail(self) -> None:
+        if self.errors:
+            raise self.errors.pop(0)
+
+    # state store ------------------------------------------------------------------------
+
+    async def get(self, *, index: str, id: str) -> ObjectApiResponse[Any]:
+        """A document with its sequence number, or a 404 with found false."""
+        self.calls.append(("get", {"id": id}))
+        self._fail()
+        if id not in self.docs:
+            raise NotFoundError("nf", meta(404), {"_id": id, "found": False})
+        body = {"_id": id, "_source": self.docs[id], "_seq_no": self.seq[id], "_primary_term": 1}
+        return ObjectApiResponse(body=body, meta=meta())
+
+    async def index(
+        self,
+        *,
+        index: str,
+        id: str,
+        document: dict[str, Any],
+        op_type: str | None = None,
+        if_seq_no: int | None = None,
+        if_primary_term: int | None = None,
+    ) -> ObjectApiResponse[Any]:
+        """Write with a version check."""
+        if self.before_write:
+            hook, self.before_write = self.before_write, None
+            hook()
+        self.calls.append(("index", {"id": id, "op_type": op_type, "if_seq_no": if_seq_no}))
+        self._fail()
+        if op_type == "create" and id in self.docs:
+            raise ConflictError("exists", meta(409), {})
+        if if_seq_no is not None and self.seq.get(id) != if_seq_no:
+            raise ConflictError("conflict", meta(409), {})
+        self.docs[id] = document
+        self._next_seq += 1
+        self.seq[id] = self._next_seq
+        return ObjectApiResponse(body={"result": "created"}, meta=meta())
+
+    # indexer ----------------------------------------------------------------------------
+
+    async def bulk(
+        self, *, operations: list[dict[str, Any]], refresh: bool
+    ) -> ObjectApiResponse[Any]:
+        """A scripted answer if there is one, otherwise everything succeeds."""
+        self.calls.append(("bulk", {"operations": operations}))
+        self._fail()
+        if self.bulk_answers:
+            return ObjectApiResponse(body=self.bulk_answers.pop(0), meta=meta())
+        items = [{"index": {"_id": op["index"]["_id"], "status": 201}} for op in operations[::2]]
+        return ObjectApiResponse(body={"errors": False, "items": items}, meta=meta())
+
+    async def refresh(self, *, index: str) -> ObjectApiResponse[Any]:
+        """Records the refresh."""
+        self.calls.append(("refresh", {"index": index}))
+        self._fail()
+        return ObjectApiResponse(body={}, meta=meta())
+
+    async def delete_by_query(
+        self, *, index: str, query: dict[str, Any], refresh: bool
+    ) -> ObjectApiResponse[Any]:
+        """Records the query."""
+        self.calls.append(("delete_by_query", {"query": query}))
+        self._fail()
+        if self.by_query_conflicts:
+            self.by_query_conflicts -= 1
+            raise ConflictError("conflict", meta(409), {})
+        return ObjectApiResponse(body={"deleted": 3}, meta=meta())
+
+    async def update_by_query(
+        self, *, index: str, query: dict[str, Any], script: dict[str, Any], refresh: bool
+    ) -> ObjectApiResponse[Any]:
+        """Records the query and the script."""
+        self.calls.append(("update_by_query", {"query": query, "script": script}))
+        self._fail()
+        if self.by_query_conflicts:
+            self.by_query_conflicts -= 1
+            raise ConflictError("conflict", meta(409), {})
+        return ObjectApiResponse(body={"updated": 4}, meta=meta())
+
+    def called(self, name: str) -> list[dict[str, Any]]:
+        """The arguments of all calls of one kind."""
+        return [args for call, args in self.calls if call == name]

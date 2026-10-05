@@ -11,7 +11,7 @@ import structlog
 from app.core.errors import NonRetryableError
 from app.core.settings import ConsumerSettings
 from app.ingestion import dlq
-from app.ingestion.consumer import ConsumerLoop, Tracked, coalesce
+from app.ingestion.consumer import ConsumerLoop, HandlerContext, Tracked, coalesce
 from app.ingestion.events import EventType, IndexEvent, parse_event
 from app.ingestion.kafka_io import KafkaMessage
 from tests.fakes.kafka import FakeBroker, FakeConsumer, FakeProducer
@@ -19,7 +19,7 @@ from tests.fakes.kafka import FakeBroker, FakeConsumer, FakeProducer
 LIVE, RETRY, DLQ = "events", "retry", "dlq"
 BASE_TIME = datetime(2026, 10, 5, 10, 0, tzinfo=UTC)
 
-Handler = Callable[[IndexEvent], Awaitable[None]]
+Handler = Callable[[IndexEvent], Awaitable[None]]  # tests ignore the context
 
 
 def _settings(**changes: object) -> ConsumerSettings:
@@ -71,6 +71,7 @@ class Harness:
         self.producer = FakeProducer(self.broker)
         self.clock = _Clock()
         self.handled: list[IndexEvent] = []
+        self.contexts: list[HandlerContext] = []
         self._handler = handler
         self.loop = ConsumerLoop(
             consumer=self.consumer,
@@ -84,8 +85,9 @@ class Harness:
         )
         self.task: asyncio.Task[None] | None = None
 
-    async def _handle(self, event: IndexEvent) -> None:
+    async def _handle(self, event: IndexEvent, context: HandlerContext) -> None:
         self.handled.append(event)
+        self.contexts.append(context)
         if self._handler:
             await self._handler(event)
 

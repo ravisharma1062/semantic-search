@@ -101,6 +101,30 @@ class NormalizerSettings(BaseModel):
     short_line_chars: int = Field(50, ge=1)
 
 
+class StoreSettings(BaseModel):
+    """The chunk index (HLD section 5) and how it is written."""
+
+    chunk_index_prefix: str = "doc_chunks"
+    # Where the worker writes. Empty means the read alias. During a re-index it is the new version.
+    write_index: str | None = None
+    shards: int = Field(3, ge=1)
+    replicas: int = Field(1, ge=0)
+    refresh_interval: str = "30s"
+    vector_index_type: Literal["hnsw", "int8_hnsw", "bbq_hnsw"] = "int8_hnsw"
+    bulk_batch_size: int = Field(200, ge=1)
+    maintenance_timeout_s: float = Field(120.0, gt=0)  # delete or update by query
+    min_index_age_days: int = Field(14, ge=0)  # an old version is kept at least this long
+
+
+class IngestionSettings(BaseModel):
+    """The indexing worker."""
+
+    window_size: int = Field(256, ge=1)  # chunks embedded and written together
+    backfill_max_in_flight: int = Field(2, ge=1)
+    heartbeat_file: str = "/tmp/worker-alive"  # noqa: S108 (the pod has its own /tmp)
+    heartbeat_interval_s: float = Field(10.0, gt=0)
+
+
 class KafkaSettings(BaseModel):
     """Kafka connection and topic names."""
 
@@ -230,6 +254,8 @@ class Settings(BaseSettings):
     search: SearchSettings
     elasticsearch: ElasticsearchSettings
     source: SourceSettings = SourceSettings()
+    store: StoreSettings = StoreSettings()
+    ingestion: IngestionSettings = IngestionSettings()
     normalizer: NormalizerSettings = NormalizerSettings()
     kafka: KafkaSettings
     consumer: ConsumerSettings = ConsumerSettings()

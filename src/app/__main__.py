@@ -5,14 +5,18 @@ import asyncio
 import uvicorn
 
 from app.core.logging import configure_logging
-from app.core.settings import AppMode, get_settings
+from app.core.settings import AppMode, Settings, get_settings
+from app.ingestion.runtime import run_worker
 from app.modes import install_signal_handlers, run_until_stopped
 
 
-async def _run_idle(mode: AppMode) -> None:
+async def _run_process(settings: Settings) -> None:
     stop = asyncio.Event()
     install_signal_handlers(asyncio.get_running_loop(), stop)
-    await run_until_stopped(mode, stop)
+    if settings.mode is AppMode.WORKER:
+        await run_worker(settings, stop)
+    else:  # the batch jobs come with task T1.7
+        await run_until_stopped(settings.mode, stop)
 
 
 def main() -> None:
@@ -29,7 +33,7 @@ def main() -> None:
             access_log=False,
         )
     else:
-        asyncio.run(_run_idle(settings.mode))
+        asyncio.run(_run_process(settings))
 
 
 if __name__ == "__main__":
