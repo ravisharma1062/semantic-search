@@ -16,3 +16,5 @@ reranker:
 llm:
   model: fake-llm
   endpoint: http://localhost:8081
+chunking:
+  tokenizer: whitespace

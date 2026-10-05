@@ -12,7 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -175,6 +175,22 @@ class ChunkingSettings(BaseModel):
     target_tokens: int = Field(400, ge=1)
     max_tokens: int = Field(512, ge=1)
     overlap_tokens: int = Field(60, ge=0)
+    min_tokens: int = Field(50, ge=0)
+    max_chunks_per_document: int = Field(20_000, ge=1)
+    # "hf" counts with the embedding model's tokenizer file (no download at runtime).
+    # "whitespace" counts words and is only for local development and tests.
+    tokenizer: Literal["hf", "whitespace"] = "hf"
+    tokenizer_file: str | None = None
+
+    @model_validator(mode="after")
+    def _check(self) -> "ChunkingSettings":
+        if not self.overlap_tokens < self.target_tokens <= self.max_tokens:
+            raise ValueError("need overlap_tokens < target_tokens <= max_tokens")
+        if self.min_tokens > self.target_tokens:
+            raise ValueError("min_tokens must not be larger than target_tokens")
+        if self.tokenizer == "hf" and not self.tokenizer_file:
+            raise ValueError("tokenizer 'hf' needs tokenizer_file")
+        return self
 
 
 class FeatureFlags(BaseModel):
