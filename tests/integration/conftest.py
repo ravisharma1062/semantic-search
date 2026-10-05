@@ -3,15 +3,18 @@
 import socket
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 
+import httpx
 import pytest
 from confluent_kafka.admin import AdminClient
 from confluent_kafka.cimpl import NewTopic
+from elasticsearch import AsyncElasticsearch
 from testcontainers.core.container import DockerContainer
 
-from app.core.settings import KafkaSettings
+from app.core.settings import ElasticsearchSettings, KafkaSettings
+from app.store.client import create_es_client
 
 KAFKA_IMAGE = "apache/kafka:3.8.0"
 
@@ -101,3 +104,42 @@ def kafka_settings(kafka_bootstrap: str, topics: Topics) -> KafkaSettings:
         request_timeout_s=10,
         producer_timeout_s=30,
     )
+
+
+ES_IMAGE = "docker.elastic.co/elasticsearch/elasticsearch:8.15.3"
+
+
+@pytest.fixture(scope="session")
+def es_url() -> Iterator[str]:
+    """A single-node Elasticsearch 8 without security."""
+    port = _free_port()
+    container = (
+        DockerContainer(ES_IMAGE)
+        .with_bind_ports(9200, port)
+        .with_env("discovery.type", "single-node")
+        .with_env("xpack.security.enabled", "false")
+        .with_env("xpack.ml.enabled", "false")
+        .with_env("ES_JAVA_OPTS", "-Xms512m -Xmx512m")
+    )
+    with container:
+        url = f"http://127.0.0.1:{port}"
+        deadline = time.monotonic() + 120
+        while True:
+            try:
+                response = httpx.get(f"{url}/_cluster/health", params={"wait_for_status": "yellow"})
+                if response.status_code == 200:
+                    break
+            except httpx.HTTPError:
+                pass
+            if time.monotonic() > deadline:
+                raise RuntimeError("Elasticsearch did not become ready")
+            time.sleep(2)
+        yield url
+
+
+@pytest.fixture
+async def es_client(es_url: str) -> AsyncIterator[AsyncElasticsearch]:
+    """An async client for the test container, closed after the test."""
+    client = create_es_client(ElasticsearchSettings(hosts=[es_url], state_index="state_test"))
+    yield client
+    await client.close()
