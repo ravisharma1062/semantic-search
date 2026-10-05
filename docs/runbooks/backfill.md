@@ -27,8 +27,9 @@ Kafka lag of the backfill group, GPU queue length of the embedding server, Elast
 - Slower: lower `APP_BACKFILL__RATE_PER_SECOND` and start the job again (it continues from its cursor).
 - Pause: `python -m app.jobs.cli backfill pause --job-id backfill-wave1`. The job stops after the page it
   is working on and keeps its cursor. Stopping the process (SIGTERM) does the same.
-- The worker side: events that are already in Kafka are still processed. To stop them too, scale the worker
-  down, or pause the backfill consumer group (task T5.4 adds a switch for it).
+- The worker side: events that are already in Kafka are still processed. To stop them too, set
+  `APP_INGESTION__BACKFILL_CONSUMER_ENABLED=false` (the backfill topic is not read, live updates continue), or
+  scale the worker down. See [runbook 2](02-backfill-control.md).
 
 ## Resume
 
@@ -53,4 +54,10 @@ It prints the counts. It is safe to run again.
 ## Failed documents
 
 A document that fails all retries ends in the DLQ and has state FAILED with the error type in
-`last_error`. Fix the cause, then `reconcile` republishes FAILED documents, or replay the DLQ.
+`last_error`. Fix the cause, then `reconcile` republishes FAILED documents, or replay the DLQ
+(`python -m app.jobs.dlq_replay`, [runbook 3](03-dlq-replay.md)).
+
+## Through the admin API
+
+`POST /v1/admin/reindex {"wave": 1}` queues a job (status `REQUESTED`) and `GET /v1/admin/reindex/{jobId}`
+shows it. A job process starts the queued jobs: `python -m app.jobs.cli backfill run-requested`.

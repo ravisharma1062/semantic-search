@@ -41,7 +41,7 @@ def create_llm(
         inner = OpenAICompatibleLLM(
             settings, http, http_client, url=f"{settings.endpoint.rstrip('/')}/v1/chat/completions"
         )
-    breaker = CircuitBreaker(settings.breaker_failures, settings.breaker_cooldown_s)
+    breaker = CircuitBreaker(settings.breaker_failures, settings.breaker_cooldown_s, name="llm")
     return GuardedLLM(
         inner, breaker, settings.timeout_s + 0.5, settings.first_token_timeout_s + 0.25
     )

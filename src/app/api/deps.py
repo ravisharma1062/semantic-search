@@ -5,8 +5,10 @@ from typing import cast
 from fastapi import Depends, Request
 
 from app.api.ratelimit import RateLimiter
+from app.core.errors import AppError
 from app.core.security import Caller, Identity, authenticate, parse_identity
 from app.core.settings import Settings
+from app.observability import audit
 from app.services import Services
 
 
@@ -42,7 +44,13 @@ def get_admin(
     limiter: RateLimiter = Depends(get_limiter),
 ) -> Caller:
     """An authenticated admin. Admin tokens are separate from service tokens."""
-    caller = authenticate(request.headers, settings.api, admin=True)
+    try:
+        caller = authenticate(request.headers, settings.api, admin=True)
+    except AppError:
+        # A refused admin call is a security event: keep a record of it (no token, no IDs).
+        route = getattr(request.scope.get("route"), "path", "unmatched")
+        audit.record("unknown", f"auth {request.method} {route}", "rejected")
+        raise
     limiter.check("service", f"admin:{caller.service}")
     return caller
 

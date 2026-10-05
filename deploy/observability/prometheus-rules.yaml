@@ -1,0 +1,134 @@
+# Alert rules for HLD section 18. Load them into Prometheus (rule_files) or wrap the groups in a
+# PrometheusRule object. Thresholds are the starting values of the HLD: tune them from real traffic.
+#
+# Metrics named semsearch_* come from this service. Others (kafka_*, DCGM_*, elasticsearch_*) come
+# from the platform exporters; their names must match the exporters in use. A test checks that every
+# semsearch_* metric used here exists in the service.
+groups:
+  - name: semantic-search-api
+    rules:
+      - alert: SearchLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(semsearch_search_stage_duration_seconds_bucket{stage="total"}[5m]))) > 2.5
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: Search p95 above 2.5 s for 10 minutes
+          action: Check Elasticsearch, the model server queue and the cache hit rate (runbooks 1 and 4).
+
+      - alert: ErrorRateHigh
+        expr: |
+          sum(rate(semsearch_http_requests_total{route=~"/v1/(search|answer.*)",status=~"5.."}[5m]))
+            / sum(rate(semsearch_http_requests_total{route=~"/v1/(search|answer.*)"}[5m])) > 0.02
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: More than 2% of search and answer requests fail
+          action: Check dependency health and recent deploys. Consider turning the flag off (runbook 1).
+
+      - alert: FallbackRateHigh
+        expr: |
+          sum(rate(semsearch_search_fallbacks_total[15m]))
+            / clamp_min(sum(rate(semsearch_search_requests_total[15m])), 1e-9) > 0.05
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: More than 5% of searches ran a simpler mode than requested
+          action: Look at semsearch_search_fallbacks_total by reason, then the embedding and reranker servers.
+
+      - alert: DependencyBreakerOpen
+        expr: max by (name) (semsearch_circuit_breaker_open) == 1
+        for: 5m
+        labels: {severity: warning}
+        annotations:
+          summary: A circuit breaker has been open for 5 minutes
+          action: The model server for this dependency is failing (runbook 4).
+
+      - alert: RagFirstTokenSlow
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(semsearch_answer_first_token_seconds_bucket[10m]))) > 3
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: Answer first token p95 above 3 s
+          action: Check the LLM server queue and the size of the context.
+
+      - alert: RateLimitingHigh
+        expr: sum(rate(semsearch_rate_limited_total[10m])) > 1
+        for: 15m
+        labels: {severity: info}
+        annotations:
+          summary: Requests are being rate limited
+          action: Look for one user or service that sends too much (runbook 8 if it looks like abuse).
+
+      - alert: TelemetryDropping
+        expr: sum(rate(semsearch_telemetry_dropped_total[15m])) > 0
+        for: 30m
+        labels: {severity: info}
+        annotations:
+          summary: LLM telemetry is being dropped
+          action: Check the Langfuse host and credentials. Answers are not affected.
+
+      - alert: CostAnomaly
+        expr: sum(increase(semsearch_llm_tokens_total[24h])) > 5e6
+        labels: {severity: warning}
+        annotations:
+          summary: Daily LLM token use is above the budget
+          action: Review top users, limits and the context size. The threshold is a placeholder, set it from the budget.
+
+  - name: semantic-search-indexing
+    rules:
+      - alert: ConsumerLagGrowing
+        expr: |
+          deriv(sum(kafka_consumergroup_lag{consumergroup=~"semantic-indexer.*"})[15m:1m]) > 0
+            and sum(kafka_consumergroup_lag{consumergroup=~"semantic-indexer.*"}) > 1000
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: Indexing lag keeps growing
+          action: Scale workers, check the model servers and Elasticsearch bulk errors (runbook 2).
+
+      - alert: DlqGrowth
+        expr: sum(increase(semsearch_ingestion_dlq_total[1h])) > 20
+        labels: {severity: warning}
+        annotations:
+          summary: More than 20 messages went to the dead letter topic in an hour
+          action: Inspect the errors, fix the cause, then replay (runbook 3).
+
+      - alert: IndexingFailuresHigh
+        expr: |
+          sum(rate(semsearch_ingestion_events_total{result=~"failed|retried"}[15m]))
+            / clamp_min(sum(rate(semsearch_ingestion_events_total[15m])), 1e-9) > 0.1
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: More than 10% of indexing events fail or are retried
+          action: Check Elasticsearch and the embedding server (runbooks 2 and 4).
+
+      - alert: BulkItemFailures
+        expr: sum(rate(semsearch_ingestion_bulk_item_failures_total[10m])) > 0
+        for: 20m
+        labels: {severity: warning}
+        annotations:
+          summary: Elasticsearch keeps rejecting chunks in bulk requests
+          action: Pause backfill and involve the search platform team (runbook 2).
+
+  - name: platform
+    rules:
+      - alert: GpuMemoryHigh
+        expr: |
+          max by (pod) (DCGM_FI_DEV_FB_USED / (DCGM_FI_DEV_FB_USED + DCGM_FI_DEV_FB_FREE)) > 0.92
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: GPU memory above 92%
+          action: Scale model servers or pause backfill (runbooks 2 and 4).
+
+      - alert: ElasticsearchRejections
+        expr: sum(increase(elasticsearch_thread_pool_rejected_count{name=~"search|write"}[10m])) > 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: Elasticsearch is rejecting search or write requests
+          action: Pause backfill and involve the search platform team.

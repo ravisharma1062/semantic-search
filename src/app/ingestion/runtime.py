@@ -11,6 +11,7 @@ import time
 from pathlib import Path
 
 import structlog
+from prometheus_client import start_http_server
 
 from app.core.settings import Settings
 from app.embeddings.factory import create_embedder, create_http_client
@@ -22,6 +23,8 @@ from app.ingestion.kafka_client import ConfluentConsumer, ConfluentProducer
 from app.ingestion.state_store import ElasticsearchStateStore
 from app.ingestion.tokens import create_token_counter
 from app.ingestion.worker import IndexingWorker
+from app.observability.metrics import get_metrics
+from app.observability.tracing import build_provider, configure_tracing
 from app.store.client import create_es_client
 
 _log = structlog.get_logger(__name__)
@@ -45,6 +48,10 @@ async def run_worker(settings: Settings, stop: asyncio.Event) -> None:
     """Run the live and backfill loops until ``stop`` is set."""
     es_client = create_es_client(settings.elasticsearch)
     http_client = create_http_client(settings.embedding)
+    obs = settings.observability
+    if obs.metrics_enabled:
+        start_http_server(obs.worker_metrics_port, registry=get_metrics().registry)
+    configure_tracing(build_provider(obs))
     try:
         worker = IndexingWorker(
             source=ElasticsearchSourceReader(
@@ -85,27 +92,35 @@ async def run_worker(settings: Settings, stop: asyncio.Event) -> None:
             dlq_topic=kafka.dlq_topic,
             settings=settings.consumer,
         )
-        backfill = ConsumerLoop(
-            consumer=ConfluentConsumer(kafka, kafka.backfill_consumer_group, rebalance_s),
-            producer=ConfluentProducer(kafka),
-            handler=worker.handle,
-            topics=[kafka.backfill_topic],
-            retry_topic=kafka.retry_topic,
-            dlq_topic=kafka.dlq_topic,
-            settings=settings.consumer.model_copy(
-                update={"max_in_flight": settings.ingestion.backfill_max_in_flight}
-            ),
-        )
+        # The backfill loop can be switched off (runbook 2): events stay in Kafka, nothing is lost,
+        # and live updates are not affected.
+        backfill: ConsumerLoop | None = None
+        if settings.ingestion.backfill_consumer_enabled:
+            backfill = ConsumerLoop(
+                consumer=ConfluentConsumer(kafka, kafka.backfill_consumer_group, rebalance_s),
+                producer=ConfluentProducer(kafka),
+                handler=worker.handle,
+                topics=[kafka.backfill_topic],
+                retry_topic=kafka.retry_topic,
+                dlq_topic=kafka.dlq_topic,
+                settings=settings.consumer.model_copy(
+                    update={"max_in_flight": settings.ingestion.backfill_max_in_flight}
+                ),
+            )
+        else:
+            _log.warning("backfill_consumer_disabled")
 
         async def stop_loops() -> None:
             await stop.wait()
             live.stop()
-            backfill.stop()
+            if backfill is not None:
+                backfill.stop()
 
         _log.info("worker_started")
         async with asyncio.TaskGroup() as group:
             group.create_task(live.run())
-            group.create_task(backfill.run())
+            if backfill is not None:
+                group.create_task(backfill.run())
             group.create_task(stop_loops())
             beat = settings.ingestion
             group.create_task(heartbeat(beat.heartbeat_file, beat.heartbeat_interval_s, stop))

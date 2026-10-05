@@ -20,11 +20,13 @@ from typing import Literal
 
 import structlog
 
-from app.core.errors import InvalidRequestError, UpstreamUnavailableError
+from app.core.errors import InvalidRequestError, NonRetryableError, UpstreamUnavailableError
 from app.core.security import Identity
 from app.core.settings import Settings
 from app.ingestion.tokens import TokenCounter
 from app.llm.base import ChatMessage, LLMClient, LLMOptions, Usage, estimate_tokens
+from app.observability.instrument import observed
+from app.observability.tracing import set_attributes, span
 from app.rag.citations import Citation, check_citations, is_not_found
 from app.rag.context import ContextChunk, build_context
 from app.rag.guardrails import Guardrails
@@ -191,7 +193,17 @@ class AnswerService:
         )
         if prepared.early is not None:
             return prepared.early, prepared.context
-        completion = await self._llm.complete(prepared.messages, self._options())
+        with span("answer.llm", model=self._llm.model_name) as current:
+            try:
+                async with observed("llm"):
+                    completion = await self._llm.complete(prepared.messages, self._options())
+            except NonRetryableError as exc:
+                raise UpstreamUnavailableError("The language model could not answer") from exc
+            set_attributes(
+                current,
+                input_tokens=completion.usage.input_tokens,
+                output_tokens=completion.usage.output_tokens,
+            )
         return self.finish(prepared, completion.text, completion.usage), prepared.context
 
     def finish(self, prepared: Prepared, raw: str, usage: Usage) -> Answer:
@@ -224,8 +236,12 @@ class AnswerService:
 
     async def stream_pieces(self, prepared: Prepared) -> AsyncIterator[str]:
         """Raw pieces from the model for the streaming endpoint."""
-        async for piece in self._llm.stream(prepared.messages, self._options()):
-            yield piece
+        try:
+            async with observed("llm"):
+                async for piece in self._llm.stream(prepared.messages, self._options()):
+                    yield piece
+        except NonRetryableError as exc:
+            raise UpstreamUnavailableError("The language model could not answer") from exc
 
     def stream_usage(self, prepared: Prepared, raw: str) -> Usage:
         """Estimated usage for a streamed answer (the stream does not report it)."""

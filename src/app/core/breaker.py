@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 from app.core.errors import AppError, UpstreamOverloadedError
+from app.observability.metrics import get_metrics
 
 T = TypeVar("T")
 
@@ -30,7 +31,9 @@ class CircuitBreaker:
         cooldown_s: float,
         *,
         clock: Callable[[], float] = time.monotonic,
+        name: str = "",
     ) -> None:
+        self._name = name
         self._threshold = failures
         self._cooldown_s = cooldown_s
         self._clock = clock
@@ -43,17 +46,26 @@ class CircuitBreaker:
         if self._open_until and self._clock() >= self._open_until:
             self._open_until = 0.0
             self._failures = self._threshold - 1  # half open: the next failure opens it again
+            self._publish()
         return self._open_until > 0.0
 
     def record_success(self) -> None:
-        """The dependency works."""
+        """The dependency works. A breaker that was open is closed."""
         self._failures = 0
+        self._open_until = 0.0
+        self._publish()
 
     def record_failure(self) -> None:
         """The dependency failed."""
         self._failures += 1
         if self._failures >= self._threshold:
             self._open_until = self._clock() + self._cooldown_s
+        self._publish()
+
+    def _publish(self) -> None:
+        """Show the state in the ``circuit_breaker_open`` metric (breakers with a name only)."""
+        if self._name:
+            get_metrics().breaker_open.labels(self._name).set(1 if self._open_until > 0 else 0)
 
     async def call(self, operation: Callable[[], Awaitable[T]]) -> T:
         """Run ``operation`` unless the breaker is open. Our own errors and timeouts count as

@@ -23,6 +23,7 @@ import structlog
 
 from app.core.settings import EmbeddingSettings, RedisSettings
 from app.embeddings.base import Embedder
+from app.observability.metrics import get_metrics
 
 _log = structlog.get_logger(__name__)
 
@@ -128,6 +129,7 @@ class CachedEmbedder:
     async def embed_query(self, text: str) -> list[float]:
         """From the cache when possible, otherwise from the model server."""
         cached = await self._cache.get(text)
+        get_metrics().cache_lookups.labels("query_embedding", "hit" if cached else "miss").inc()
         if cached is not None:
             return cached
         vector = await self._inner.embed_query(text)

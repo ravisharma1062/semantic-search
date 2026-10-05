@@ -30,3 +30,4 @@ Thumbs.db
 
 # Evaluation results (keep the ones you want to compare in docs/)
 eval/results/
+loadtest/results/

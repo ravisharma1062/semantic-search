@@ -22,6 +22,7 @@ from app.store.calls import guarded
 class JobStatus(StrEnum):
     """Where the job process stands."""
 
+    REQUESTED = "REQUESTED"  # asked for through the admin API, not started yet
     RUNNING = "RUNNING"
     PAUSED = "PAUSED"
     COMPLETED = "COMPLETED"
@@ -202,6 +203,73 @@ class ElasticsearchJobStore:
         if error:
             fields["last_error"] = error[:256]
         await self._update(job_id, fields)
+
+    async def request_job(
+        self, job_id: str, kind: str, wave: int | None, *, restart: bool = False
+    ) -> JobRecord:
+        """Ask for a job to run. A job process (``backfill run-requested``) picks it up.
+
+        A job that is already REQUESTED or RUNNING is returned as it is (asking twice is
+        harmless). A finished or paused job is queued again, from its cursor unless ``restart``.
+        """
+        existing = await self.get(job_id)
+        now = self._clock()
+        if existing is None:
+            record = JobRecord(
+                job_id=job_id,
+                kind=kind,
+                wave=wave,
+                status=JobStatus.REQUESTED,
+                started_at=now,
+                updated_at=now,
+            )
+
+            async def create() -> None:
+                await self._client.index(
+                    index=self._index,
+                    id=job_id,
+                    document=record.model_dump(mode="json", exclude_none=True),
+                    op_type="create",
+                )
+
+            try:
+                await guarded(create, self._retry, self._sleep)
+            except ConflictError:
+                return await self.request_job(job_id, kind, wave, restart=restart)
+            return record
+        if existing.status in (JobStatus.REQUESTED, JobStatus.RUNNING):
+            return existing
+        fields: dict[str, Any] = {
+            "status": JobStatus.REQUESTED.value,
+            "desired": "RUNNING",
+            "last_error": None,
+            "finished_at": None,
+        }
+        changes: dict[str, Any] = {"status": JobStatus.REQUESTED, "desired": "RUNNING"}
+        if restart:
+            cleared = {"cursor": None, "scanned": 0, "published": 0, "skipped_up_to_date": 0}
+            fields |= cleared
+            changes |= cleared
+        await self._update(job_id, fields)
+        return existing.model_copy(update=changes)
+
+    async def list_requested(self) -> list[JobRecord]:
+        """Jobs that wait for a process to start them, oldest first."""
+
+        async def fetch() -> list[dict[str, Any]]:
+            response = await self._client.search(
+                index=self._index,
+                query={"term": {"status": JobStatus.REQUESTED.value}},
+                sort=[{"started_at": {"order": "asc"}}],
+                size=100,
+                track_total_hits=False,
+            )
+            return list(response["hits"]["hits"])
+
+        return [
+            JobRecord.model_validate(h["_source"])
+            for h in await guarded(fetch, self._retry, self._sleep)
+        ]
 
     async def request(self, job_id: str, desired: Literal["RUNNING", "PAUSED"]) -> bool:
         """Ask a running job to pause (or clear the request). False if there is no such job."""

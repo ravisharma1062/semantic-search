@@ -119,6 +119,7 @@ def es_url() -> Iterator[str]:
         .with_env("discovery.type", "single-node")
         .with_env("xpack.security.enabled", "false")
         .with_env("xpack.ml.enabled", "false")
+        .with_env("path.repo", "/tmp/es-snapshots")  # noqa: S108 (inside the container)
         .with_env("ES_JAVA_OPTS", "-Xms512m -Xmx512m")
     )
     with container:

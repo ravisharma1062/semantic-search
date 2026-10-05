@@ -23,6 +23,7 @@ from app.core.retry import RetryPolicy, backoff_delays
 from app.core.settings import ElasticsearchSettings, StoreSettings
 from app.ingestion.chunker import Chunk
 from app.ingestion.source import SourceDocument
+from app.observability.metrics import get_metrics
 from app.store.calls import guarded
 
 _log = structlog.get_logger(__name__)
@@ -152,7 +153,10 @@ class ElasticsearchIndexer:
                 return dict(response.body)
 
             body = await guarded(send, self._retry, self._sleep)
+            written = len(pending)
             pending = self._failed_items(body, pending)
+            get_metrics().chunks_written.inc(written - len(pending))
+            get_metrics().bulk_failures.inc(len(pending))
             if not pending:
                 return
             if attempt < len(delays):

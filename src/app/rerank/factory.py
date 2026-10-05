@@ -16,5 +16,7 @@ def create_reranker(
 ) -> Reranker:
     """The in-house reranker with a timeout and a circuit breaker around it."""
     inner = InHouseReranker(settings, JsonHttpClient(http_client, retry))
-    breaker = CircuitBreaker(settings.breaker_failures, settings.breaker_cooldown_s)
+    breaker = CircuitBreaker(
+        settings.breaker_failures, settings.breaker_cooldown_s, name="reranker"
+    )
     return GuardedReranker(inner, breaker, settings.timeout_s + 0.1)

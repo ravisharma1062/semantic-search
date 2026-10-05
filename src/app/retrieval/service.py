@@ -22,6 +22,9 @@ from app.core.errors import (
 from app.core.security import Identity
 from app.core.settings import Settings
 from app.embeddings.base import Embedder
+from app.observability.instrument import observed
+from app.observability.metrics import get_metrics
+from app.observability.tracing import set_attributes, span
 from app.rerank.base import Reranker
 from app.retrieval.acl import AclFilter
 from app.retrieval.filters import SearchFilters
@@ -97,21 +100,45 @@ class SearchService:
         fetch = max(size, cfg.rerank_top_n) if use_rerank else size
         started = time.perf_counter()
         reranked = False
-        try:
-            async with asyncio.timeout(cfg.timeout_ms / 1000):
-                outcome = await self._find(query, acl, filters or SearchFilters(), fetch, mode)
-                hits = outcome.hits
-                if use_rerank and hits:
-                    hits, reranked = await self._rerank(query, hits)
-        except TimeoutError as exc:
-            raise UpstreamTimeoutError("Search budget exceeded") from exc
-        if group_by_document:
-            hits = best_chunk_per_document(hits)
-        return SearchResult(
-            mode_used=self._mode_used(outcome) + ("+rerank" if reranked else ""),
-            hits=hits[:size],
-            took_ms=round((time.perf_counter() - started) * 1000),
-        )
+        metrics = get_metrics()
+        with span("search", mode=mode) as current:
+            try:
+                async with asyncio.timeout(cfg.timeout_ms / 1000):
+                    outcome = await self._find(query, acl, filters or SearchFilters(), fetch, mode)
+                    hits = outcome.hits
+                    if use_rerank and hits:
+                        hits, reranked = await self._rerank(query, hits)
+            except TimeoutError as exc:
+                metrics.search_errors.labels(UpstreamTimeoutError.code.value).inc()
+                raise UpstreamTimeoutError("Search budget exceeded") from exc
+            except AppError as exc:
+                metrics.search_errors.labels(exc.code.value).inc()
+                raise
+            if group_by_document:
+                hits = best_chunk_per_document(hits)
+            mode_used = self._mode_used(outcome) + ("+rerank" if reranked else "")
+            elapsed = time.perf_counter() - started
+            self._record(mode, outcome.mode, use_rerank, reranked, len(hits[:size]), elapsed)
+            set_attributes(
+                current, mode_used=mode_used, results=len(hits[:size]), candidates=len(hits)
+            )
+        return SearchResult(mode_used=mode_used, hits=hits[:size], took_ms=round(elapsed * 1000))
+
+    @staticmethod
+    def _record(
+        requested: str, ran: str, wanted_rerank: bool, reranked: bool, results: int, elapsed: float
+    ) -> None:
+        """Metrics of one search. A fallback is a simpler search than the one that was asked for."""
+        metrics = get_metrics()
+        expected = {"hybrid": "hybrid", "bm25": "bm25", "vector": "knn"}[requested]
+        mode_used = ran + ("+rerank" if reranked else "")
+        metrics.search_requests.labels(mode_used).inc()
+        if ran != expected:
+            metrics.search_fallbacks.labels(f"{requested}_to_{ran}").inc()
+        if wanted_rerank and not reranked:
+            metrics.search_fallbacks.labels("rerank_skipped").inc()
+        metrics.search_stage.labels("total").observe(elapsed)
+        metrics.search_results.observe(results)
 
     async def _rerank(self, query: str, hits: list[SearchHit]) -> tuple[list[SearchHit], bool]:
         """Reorder the best candidates. Any problem keeps the RRF order."""
@@ -124,7 +151,8 @@ class SearchService:
             f"{h.section_title}\n{h.content}" if h.section_title else h.content for h in candidates
         ]
         try:
-            ordering = await reranker.rerank(query, passages, len(candidates))
+            async with observed("reranker", stage="rerank"):
+                ordering = await reranker.rerank(query, passages, len(candidates))
             reordered = [candidates[i].model_copy(update={"score": s}) for i, s in ordering]
         except (AppError, TimeoutError, IndexError) as exc:
             _log.warning("rerank_skipped", error_type=type(exc).__name__)
@@ -139,7 +167,8 @@ class SearchService:
         """The query embedding, or ``None`` if it failed (then keyword search runs alone)."""
         budget = self._settings.embedding.timeout_s + 0.25
         try:
-            return await asyncio.wait_for(self._embedder.embed_query(query), budget)
+            async with observed("embedding", stage="embed"):
+                return await asyncio.wait_for(self._embedder.embed_query(query), budget)
         except (AppError, TimeoutError) as exc:
             if required:
                 raise
@@ -155,10 +184,13 @@ class SearchService:
         mode: RequestMode,
     ) -> SearchOutcome:
         if mode == "bm25":
-            return await self._searcher.search(query, None, acl, filters, size)
+            async with observed("elasticsearch", stage="retrieve"):
+                return await self._searcher.search(query, None, acl, filters, size)
         vector = await self._query_vector(query, required=mode == "vector")
         if mode == "vector":
             if vector is None:
                 raise UpstreamUnavailableError("Query embedding failed")
-            return await self._searcher.knn_only(query, vector, acl, filters, size)
-        return await self._searcher.search(query, vector, acl, filters, size)
+            async with observed("elasticsearch", stage="retrieve"):
+                return await self._searcher.knn_only(query, vector, acl, filters, size)
+        async with observed("elasticsearch", stage="retrieve"):
+            return await self._searcher.search(query, vector, acl, filters, size)

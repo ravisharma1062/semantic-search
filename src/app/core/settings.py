@@ -123,11 +123,23 @@ class StoreSettings(BaseModel):
     min_index_age_days: int = Field(14, ge=0)  # an old version is kept at least this long
 
 
+class SnapshotSettings(BaseModel):
+    """Snapshots of the chunk and state indices (HLD section 17, "Backup and recovery"). The
+    repository itself (object storage) is registered by the platform team."""
+
+    repository: str = "semantic-search-snapshots"
+    keep_last: int = Field(14, ge=1)  # daily snapshots: two weeks
+    restore_prefix: str = "restored_"
+    wait_timeout_s: float = Field(7200.0, gt=0)  # snapshots of big indices take a long time
+
+
 class IngestionSettings(BaseModel):
     """The indexing worker."""
 
     window_size: int = Field(256, ge=1)  # chunks embedded and written together
     backfill_max_in_flight: int = Field(2, ge=1)
+    # False: this worker does not read the backfill topic (runbook 2). Live updates continue.
+    backfill_consumer_enabled: bool = True
     heartbeat_file: str = "/tmp/worker-alive"  # noqa: S108 (the pod has its own /tmp)
     heartbeat_interval_s: float = Field(10.0, gt=0)
 
@@ -325,6 +337,31 @@ class ChunkingSettings(BaseModel):
         return self
 
 
+class LangfuseSettings(BaseModel):
+    """Langfuse LLM telemetry over its HTTP API. Metadata only: never the question or the answer."""
+
+    enabled: bool = False
+    host: str = ""
+    public_key: SecretStr | None = None
+    secret_key: SecretStr | None = None
+    queue_size: int = Field(1000, ge=1)
+    batch_size: int = Field(20, ge=1)
+    flush_interval_s: float = Field(5.0, gt=0)
+    timeout_s: float = Field(2.0, gt=0)
+
+
+class ObservabilitySettings(BaseModel):
+    """Metrics, traces and LLM telemetry (HLD section 18)."""
+
+    metrics_enabled: bool = True
+    worker_metrics_port: int = Field(9100, ge=1, le=65535)
+    service_name: str = "semantic-search"
+    # Traces go to an OTLP/HTTP collector. Empty means no export (spans are no-ops).
+    otlp_endpoint: str = ""
+    trace_sample_ratio: float = Field(0.1, ge=0, le=1)
+    langfuse: LangfuseSettings = LangfuseSettings()
+
+
 class FeatureFlags(BaseModel):
     """Feature switches."""
 
@@ -349,6 +386,7 @@ class Settings(BaseSettings):
     elasticsearch: ElasticsearchSettings
     source: SourceSettings = SourceSettings()
     store: StoreSettings = StoreSettings()
+    snapshot: SnapshotSettings = SnapshotSettings()
     api: ApiSettings = ApiSettings()
     backfill: BackfillSettings = BackfillSettings()
     ingestion: IngestionSettings = IngestionSettings()
@@ -363,6 +401,7 @@ class Settings(BaseSettings):
     rag: RagSettings = RagSettings()
     chunking: ChunkingSettings
     feature_flags: FeatureFlags = FeatureFlags()
+    observability: ObservabilitySettings = ObservabilitySettings()
 
     @model_validator(mode="after")
     def _prod_needs_auth(self) -> "Settings":

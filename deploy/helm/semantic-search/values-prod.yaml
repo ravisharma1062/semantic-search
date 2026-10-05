@@ -1,0 +1,21 @@
+# Production settings on top of values.yaml: helm upgrade -f values.yaml -f values-prod.yaml ...
+# Endpoints, model names, selectors and the secret name are environment values: set them in the
+# deployment pipeline (see docs/runbooks/deploy.md). The service refuses to start without them.
+api:
+  replicaCount: 3
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 12
+    targetCpuUtilization: 65
+
+worker:
+  replicaCount: 2
+  keda:
+    enabled: true
+
+pdb:
+  enabled: true
+
+networkPolicy:
+  enabled: true

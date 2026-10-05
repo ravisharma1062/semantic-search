@@ -141,6 +141,77 @@ components:
       - error
       title: ErrorResponse
       type: object
+    IndexRequest:
+      additionalProperties: false
+      description: '``POST /v1/index/documents``.'
+      properties:
+        item_id:
+          maxLength: 128
+          minLength: 1
+          title: Item Id
+          type: string
+      required:
+      - item_id
+      title: IndexRequest
+      type: object
+    JobResponse:
+      description: A re-index job.
+      properties:
+        job:
+          additionalProperties: true
+          title: Job
+          type: object
+        request_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Request Id
+      required:
+      - request_id
+      - job
+      title: JobResponse
+      type: object
+    QueuedResponse:
+      description: A request that was queued. The work is done by the workers, not
+        by this call.
+      properties:
+        event_id:
+          title: Event Id
+          type: string
+        item_id:
+          title: Item Id
+          type: string
+        request_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Request Id
+        status:
+          default: queued
+          title: Status
+          type: string
+      required:
+      - request_id
+      - item_id
+      - event_id
+      title: QueuedResponse
+      type: object
+    ReindexRequest:
+      additionalProperties: false
+      description: '``POST /v1/admin/reindex``.'
+      properties:
+        restart:
+          default: false
+          title: Restart
+          type: boolean
+        wave:
+          minimum: 1.0
+          title: Wave
+          type: integer
+      required:
+      - wave
+      title: ReindexRequest
+      type: object
     SearchFilters:
       additionalProperties: false
       description: Optional filters. All of them are added next to the access filter,
@@ -332,28 +403,13 @@ paths:
       summary: Ready
       tags:
       - health
-  /v1/answer:
+  /v1/admin/reindex:
     post:
-      description: An answer from the documents the user may read, with citations.
-      operationId: answer_v1_answer_post
+      description: Queue a batch re-index job for a wave. A job process starts it
+        (see the backfill runbook).
+      operationId: request_reindex_v1_admin_reindex_post
       parameters:
       - &id001
-        description: The end user. Accepted only from a service that is allowed to
-          send it.
-        in: header
-        name: X-User-Id
-        required: true
-        schema:
-          maxLength: 256
-          type: string
-      - &id002
-        description: Comma separated groups of the end user.
-        in: header
-        name: X-User-Groups
-        required: false
-        schema:
-          type: string
-      - &id003
         description: Trace ID. Returned in the response and passed to all downstream
           calls.
         in: header
@@ -362,6 +418,156 @@ paths:
         schema:
           maxLength: 128
           type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReindexRequest'
+        required: true
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Bad Request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Unauthorized
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Not Found
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Too Many Requests
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+        '504':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Gateway Timeout
+      security:
+      - adminToken: []
+      summary: Request Reindex
+      tags:
+      - admin
+  /v1/admin/reindex/{job_id}:
+    get:
+      description: The state of a re-index job.
+      operationId: reindex_status_v1_admin_reindex__job_id__get
+      parameters:
+      - in: path
+        name: job_id
+        required: true
+        schema:
+          maxLength: 128
+          minLength: 1
+          title: Job Id
+          type: string
+      - *id001
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Bad Request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Unauthorized
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Not Found
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Too Many Requests
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+        '504':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Gateway Timeout
+      security:
+      - adminToken: []
+      summary: Reindex Status
+      tags:
+      - admin
+  /v1/answer:
+    post:
+      description: An answer from the documents the user may read, with citations.
+      operationId: answer_v1_answer_post
+      parameters:
+      - &id002
+        description: The end user. Accepted only from a service that is allowed to
+          send it.
+        in: header
+        name: X-User-Id
+        required: true
+        schema:
+          maxLength: 256
+          type: string
+      - &id003
+        description: Comma separated groups of the end user.
+        in: header
+        name: X-User-Groups
+        required: false
+        schema:
+          type: string
+      - *id001
       requestBody:
         content:
           application/json:
@@ -432,9 +638,9 @@ paths:
         discards them.'
       operationId: answer_stream_v1_answer_stream_post
       parameters:
-      - *id001
       - *id002
       - *id003
+      - *id001
       requestBody:
         content:
           application/json:
@@ -487,15 +693,150 @@ paths:
       summary: Answer Stream
       tags:
       - answer
+  /v1/documents/{doc_id}:
+    delete:
+      description: Queue the removal of all chunks of a document. The source document
+        is not touched.
+      operationId: delete_document_v1_documents__doc_id__delete
+      parameters:
+      - in: path
+        name: doc_id
+        required: true
+        schema:
+          maxLength: 128
+          minLength: 1
+          title: Doc Id
+          type: string
+      - *id001
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueuedResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Bad Request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Unauthorized
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Not Found
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Too Many Requests
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+        '504':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Gateway Timeout
+      security:
+      - adminToken: []
+      summary: Delete Document
+      tags:
+      - admin
+  /v1/index/documents:
+    post:
+      description: Queue one document for indexing by its ITEM_ID.
+      operationId: index_document_v1_index_documents_post
+      parameters:
+      - *id001
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IndexRequest'
+        required: true
+      responses:
+        '202':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueuedResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Bad Request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Unauthorized
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Not Found
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Too Many Requests
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+        '504':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Gateway Timeout
+      security:
+      - adminToken: []
+      summary: Index Document
+      tags:
+      - admin
   /v1/search:
     post:
       description: Hybrid search within the rights of the user. Never returns what
         the user may not open.
       operationId: search_v1_search_post
       parameters:
-      - *id001
       - *id002
       - *id003
+      - *id001
       requestBody:
         content:
           application/json:

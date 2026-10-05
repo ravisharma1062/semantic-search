@@ -1,0 +1,66 @@
+{{- if and .Values.api.enabled .Values.api.autoscaling.enabled }}
+{{- $ctx := dict "root" . "mode" "api" }}
+# The API scales on CPU. Keep minReplicas at 3 or more for availability across zones.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "ss.fullname" . }}-api
+  labels:
+    {{- include "ss.labels" $ctx | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "ss.fullname" . }}-api
+  minReplicas: {{ .Values.api.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.api.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.api.autoscaling.targetCpuUtilization }}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+    scaleDown:
+      # Scale down slowly: a spike often comes back.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+{{- end }}
+{{- if and .Values.worker.enabled .Values.worker.keda.enabled }}
+{{- $ctx := dict "root" . "mode" "worker" }}
+---
+# The worker scales on Kafka lag (needs KEDA in the cluster). One trigger per consumer group.
+# More replicas than partitions do no work: keep maxReplicaCount at or below the partition count.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "ss.fullname" . }}-worker
+  labels:
+    {{- include "ss.labels" $ctx | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "ss.fullname" . }}-worker
+  minReplicaCount: {{ .Values.worker.keda.minReplicas }}
+  maxReplicaCount: {{ .Values.worker.keda.maxReplicas }}
+  pollingInterval: {{ .Values.worker.keda.pollingIntervalSeconds }}
+  cooldownPeriod: {{ .Values.worker.keda.cooldownSeconds }}
+  triggers:
+    {{- range (required "worker.keda.triggers is required when KEDA is enabled" .Values.worker.keda.triggers) }}
+    - type: kafka
+      metadata:
+        bootstrapServers: {{ required "worker.keda.bootstrapServers is required" $.Values.worker.keda.bootstrapServers | quote }}
+        consumerGroup: {{ .consumerGroup | quote }}
+        topic: {{ .topic | quote }}
+        lagThreshold: {{ .lagThreshold | default 100 | quote }}
+    {{- end }}
+{{- end }}

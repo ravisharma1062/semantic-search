@@ -1,0 +1,47 @@
+{{- if and .Values.api.enabled .Values.canary.enabled }}
+{{- $ctx := dict "root" . "mode" "api" }}
+# A few API pods with the new image next to the stable ones. The Service selects both (it does not
+# look at the track label), so the canary gets about canary / (stable + canary) of the traffic.
+# Roll out: enable the canary with the new tag, watch it (loadtest/canary_check.py), then move
+# image.tag to the new version and disable the canary. Roll back: disable the canary.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ss.fullname" . }}-api-canary
+  labels:
+    {{- include "ss.labels" $ctx | nindent 4 }}
+    app.kubernetes.io/track: canary
+spec:
+  replicas: {{ .Values.canary.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "ss.selectorLabels" $ctx | nindent 6 }}
+      app.kubernetes.io/track: canary
+  template:
+    metadata:
+      labels:
+        {{- include "ss.labels" $ctx | nindent 8 }}
+        app.kubernetes.io/track: canary
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.api.port | quote }}
+        prometheus.io/path: /metrics
+    spec:
+      {{- $container := printf `ports:
+  - name: http
+    containerPort: %d
+livenessProbe:
+  httpGet: {path: /health/live, port: http}
+  periodSeconds: 10
+  failureThreshold: 3
+readinessProbe:
+  httpGet: {path: /health/ready, port: http}
+  periodSeconds: 5
+  failureThreshold: 3
+startupProbe:
+  httpGet: {path: /health/live, port: http}
+  periodSeconds: 2
+  failureThreshold: 30` (int .Values.api.port) }}
+      {{- include "ss.podSpec" (dict "root" . "mode" "api" "cfg" .Values.api "container" $container "imageTag" (required "canary.tag is required when the canary is enabled" .Values.canary.tag)) | nindent 6 }}
+{{- end }}

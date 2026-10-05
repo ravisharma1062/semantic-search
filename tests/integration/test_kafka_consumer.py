@@ -260,3 +260,28 @@ async def test_rebalance_loses_no_message(
     loop_b.stop()
     await asyncio.wait_for(asyncio.gather(task_a, task_b), timeout=40)
     assert seen == set(first_batch + second_batch)
+
+
+async def test_the_dlq_is_replayed_to_the_live_topic_on_real_kafka(
+    kafka_settings: KafkaSettings, topics: Topics, kafka_bootstrap: str
+) -> None:
+    from app.jobs.dlq_replay import REPLAYED, DlqReplayer
+
+    good = [(f"ITEM-{n}", _event(f"ITEM-{n}")) for n in range(3)]
+    _produce(kafka_bootstrap, topics.dlq, [*good, ("BAD", b"not json")])
+    producer = ConfluentProducer(kafka_settings)
+    try:
+        replayer = DlqReplayer(
+            consumer=ConfluentConsumer(kafka_settings, f"{topics.group}-dlq-replay", 10),
+            producer=producer,
+            dlq_topic=topics.dlq,
+            live_topic=topics.live,
+            idle_timeout_s=2.0,
+        )
+        report = await replayer.run()
+    finally:
+        await producer.close()
+    assert (report.read, report.replayed, report.invalid_skipped) == (4, 3, 1)
+    replayed = _read_all(kafka_bootstrap, topics.live, expected=3)
+    assert sorted(value for value, _ in replayed) == sorted(value for _, value in good)
+    assert all(headers.get(REPLAYED) == b"1" for _, headers in replayed)

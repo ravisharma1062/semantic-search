@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 
 from app.core.errors import RateLimitedError
+from app.observability.metrics import get_metrics
 
 
 class RateLimiter:
@@ -37,6 +38,7 @@ class RateLimiter:
         if now - start >= 60:
             start, count = now, 0
         if count >= limit:
+            get_metrics().rate_limited.labels(kind).inc()
             raise RateLimitedError(retry_after_s=max(1, int(60 - (now - start)) + 1))
         if len(self._windows) >= self._max_keys:
             self._drop_old(now)

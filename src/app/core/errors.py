@@ -11,6 +11,7 @@ class ErrorCode(StrEnum):
 
     INVALID_REQUEST = "INVALID_REQUEST"
     UNAUTHORIZED = "UNAUTHORIZED"
+    NOT_FOUND = "NOT_FOUND"
     RATE_LIMITED = "RATE_LIMITED"
     UPSTREAM_UNAVAILABLE = "UPSTREAM_UNAVAILABLE"
     TIMEOUT = "TIMEOUT"
@@ -63,6 +64,14 @@ class ForbiddenError(AppError):
     code = ErrorCode.UNAUTHORIZED
     http_status = 403
     default_message = "Forbidden"
+
+
+class NotFoundError(AppError):
+    """An admin resource (a job) does not exist."""
+
+    code = ErrorCode.NOT_FOUND
+    http_status = 404
+    default_message = "Not found"
 
 
 class RateLimitedError(AppError):

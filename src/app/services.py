@@ -12,8 +12,12 @@ from redis.asyncio import Redis
 
 from app.core.settings import Settings
 from app.embeddings.factory import create_embedder, create_http_client
+from app.ingestion.kafka_client import ConfluentProducer
 from app.ingestion.tokens import create_token_counter
+from app.jobs.admin import AdminService
+from app.jobs.job_store import ElasticsearchJobStore
 from app.llm.factory import create_llm, create_llm_http_client
+from app.observability.langfuse import LangfuseSink
 from app.rag.prompts import load_prompt
 from app.rag.service import AnswerService
 from app.rerank.factory import create_reranker
@@ -29,6 +33,8 @@ class Services:
 
     search: SearchService
     answer: AnswerService | None = None
+    langfuse: LangfuseSink | None = None
+    admin: AdminService | None = None
     closers: list[Callable[[], Awaitable[None]]] = field(default_factory=list)
 
     async def close(self) -> None:
@@ -77,4 +83,21 @@ async def build_services(settings: Settings) -> Services:
             settings=settings,
             counter=create_token_counter(settings.chunking),
         )
-    return Services(search=search, answer=answer, closers=closers)
+    langfuse = None
+    lf = settings.observability.langfuse
+    if lf.enabled:
+        lf_http = httpx.AsyncClient()
+        closers.append(lf_http.aclose)
+        langfuse = LangfuseSink(lf, lf_http)
+    admin = None
+    if settings.api.admin_tokens:
+        producer = ConfluentProducer(settings.kafka)
+        closers.append(producer.close)
+        admin = AdminService(
+            producer=producer,
+            jobs=ElasticsearchJobStore(
+                es, settings.backfill.job_index, settings.elasticsearch, settings.retry
+            ),
+            settings=settings,
+        )
+    return Services(search=search, answer=answer, langfuse=langfuse, admin=admin, closers=closers)

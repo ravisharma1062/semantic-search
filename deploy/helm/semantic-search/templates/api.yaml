@@ -22,16 +22,23 @@ metadata:
   labels:
     {{- include "ss.labels" $ctx | nindent 4 }}
 spec:
+  {{- if not .Values.api.autoscaling.enabled }}
   replicas: {{ .Values.api.replicaCount }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "ss.selectorLabels" $ctx | nindent 6 }}
+      app.kubernetes.io/track: stable
   template:
     metadata:
       labels:
         {{- include "ss.labels" $ctx | nindent 8 }}
+        app.kubernetes.io/track: stable
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.api.port | quote }}
+        prometheus.io/path: /metrics
     spec:
       {{- include "ss.podSpec" (dict "root" . "mode" "api" "cfg" .Values.api "container" $container) | nindent 6 }}
 ---

@@ -31,6 +31,7 @@ from app.ingestion.kafka_io import (
     TopicPartition,
 )
 from app.ingestion.offsets import OffsetTracker
+from app.observability.metrics import get_metrics
 
 
 @dataclass(frozen=True)
@@ -307,6 +308,7 @@ class ConsumerLoop:
             return await self._dead_letter(work, "non-retryable error", exc)
         except Exception as exc:
             return await self._retry_or_dead_letter(work, exc)
+        get_metrics().events.labels("handled").inc()
         _log.debug("event_handled", item_id=event.item_id, event_type=event.event_type.value)
         return True
 
@@ -321,6 +323,7 @@ class ConsumerLoop:
             error,
             self._clock(),
         )
+        get_metrics().events.labels("retried").inc()
         _log.warning(
             "event_sent_to_retry",
             item_id=work.event.item_id,
@@ -333,6 +336,8 @@ class ConsumerLoop:
         outgoing = dlq.build_dlq(
             work.winner.message, self._dlq_topic, work.retry_count, reason, error, self._clock()
         )
+        get_metrics().events.labels("dead_lettered").inc()
+        get_metrics().dlq.labels(reason).inc()
         _log.error(
             "event_sent_to_dlq",
             item_id=work.event.item_id,
@@ -344,6 +349,8 @@ class ConsumerLoop:
     async def _dead_letter_invalid(self, message: KafkaMessage, reason: str) -> None:
         """A message that is not a valid event. It is finished once it is in the DLQ."""
         outgoing = dlq.build_dlq(message, self._dlq_topic, 0, reason, None, self._clock())
+        get_metrics().events.labels("invalid").inc()
+        get_metrics().dlq.labels("invalid event").inc()
         _log.error(
             "invalid_event_sent_to_dlq",
             topic=message.topic,

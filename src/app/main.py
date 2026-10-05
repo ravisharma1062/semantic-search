@@ -6,13 +6,14 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 
-from app.api import answer, health, search
+from app.api import admin, answer, health, metrics, search
 from app.api.contract import build_contract
 from app.api.errors import register_error_handlers
 from app.api.middleware import RequestContextMiddleware
 from app.api.ratelimit import RateLimiter
 from app.core.logging import configure_logging
 from app.core.settings import Settings, get_settings
+from app.observability.tracing import build_provider, configure_tracing
 from app.services import Services, build_services
 
 API_VERSION = "0.3.0"
@@ -25,6 +26,8 @@ def include_routes(app: FastAPI) -> None:
     app.include_router(health.router)
     app.include_router(search.router)
     app.include_router(answer.router)
+    app.include_router(admin.router)
+    app.include_router(metrics.router)
 
 
 def create_app(settings: Settings | None = None, services: Services | None = None) -> FastAPI:
@@ -38,11 +41,18 @@ def create_app(settings: Settings | None = None, services: Services | None = Non
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         owned = services is None
+        provider = build_provider(settings.observability)
+        if provider is not None:
+            configure_tracing(provider)
         app.state.services = services if services is not None else await build_services(settings)
+        if app.state.services.langfuse is not None:
+            await app.state.services.langfuse.start()
         app.state.ready = True
         _log.info("service_started", mode=settings.mode.value, env=settings.env)
         yield
         app.state.ready = False
+        if app.state.services.langfuse is not None:
+            await app.state.services.langfuse.close()
         if owned:
             await app.state.services.close()
         _log.info("service_stopped")

@@ -21,7 +21,7 @@ from app.core.settings import Settings, WaveSpec, get_settings
 from app.ingestion.kafka_client import ConfluentProducer
 from app.ingestion.state_admin import StateAdmin
 from app.jobs.backfill import BackfillJob
-from app.jobs.job_store import ElasticsearchJobStore
+from app.jobs.job_store import ElasticsearchJobStore, JobRecord
 from app.jobs.progress import build_report, format_report
 from app.jobs.rate import RateLimiter
 from app.jobs.reconcile import Reconciler
@@ -43,6 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
         sub = backfill.add_parser(name)
         sub.add_argument("--job-id", required=True)
     backfill.add_parser("status", help="progress per wave and status, and the jobs")
+    backfill.add_parser(
+        "run-requested", help="run the jobs that were requested through the admin API"
+    )
     reconcile = top.add_parser("reconcile", help="republish differences between state and source")
     reconcile.add_argument("--wave", type=int)
     reconcile.add_argument("--max-items", type=int)
@@ -60,6 +63,37 @@ def find_wave(settings: Settings, number: int) -> WaveSpec:
 
 def _model(settings: Settings) -> str:
     return f"{settings.embedding.model}@{settings.embedding.model_version}"
+
+
+NEWLINE = chr(10)
+
+
+def _backfill_job(
+    settings: Settings,
+    scanner: SourceScanner,
+    jobs: ElasticsearchJobStore,
+    states: StateAdmin,
+    producer: ConfluentProducer,
+    limiter: RateLimiter,
+) -> BackfillJob:
+    return BackfillJob(
+        scanner=scanner,
+        jobs=jobs,
+        states=states,
+        producer=producer,
+        topic=settings.kafka.backfill_topic,
+        limiter=limiter,
+        settings=settings.backfill,
+        embedding_model=_model(settings),
+        chunker_version=settings.chunking.version,
+    )
+
+
+def _summary(record: JobRecord) -> str:
+    return (
+        f"{record.job_id}: {record.status.value}, scanned {record.scanned}, "
+        f"published {record.published}, up to date {record.skipped_up_to_date}"
+    )
 
 
 async def run(args: argparse.Namespace, settings: Settings, stop: asyncio.Event) -> str:
@@ -107,6 +141,15 @@ async def run(args: argparse.Namespace, settings: Settings, stop: asyncio.Event)
             case "pause":
                 found = await jobs.request(args.job_id, "PAUSED")
                 return "pause requested" if found else "no such job"
+            case "run-requested":
+                done: list[str] = []
+                for requested in await jobs.list_requested():
+                    if stop.is_set() or requested.wave is None:
+                        break
+                    job = _backfill_job(settings, scanner, jobs, states, producer, limiter)
+                    wave = find_wave(settings, requested.wave)
+                    done.append(_summary(await job.run(requested.job_id, wave, stop)))
+                return NEWLINE.join(done) or "no requested jobs"
             case "start" | "resume":
                 job_id = args.job_id or f"backfill-wave{args.wave}"
                 if args.command == "resume":
@@ -116,22 +159,9 @@ async def run(args: argparse.Namespace, settings: Settings, stop: asyncio.Event)
                     wave = find_wave(settings, record.wave)
                 else:
                     wave = find_wave(settings, args.wave)
-                job = BackfillJob(
-                    scanner=scanner,
-                    jobs=jobs,
-                    states=states,
-                    producer=producer,
-                    topic=settings.kafka.backfill_topic,
-                    limiter=limiter,
-                    settings=settings.backfill,
-                    embedding_model=_model(settings),
-                    chunker_version=settings.chunking.version,
-                )
+                job = _backfill_job(settings, scanner, jobs, states, producer, limiter)
                 record = await job.run(job_id, wave, stop, restart=getattr(args, "restart", False))
-                return (
-                    f"{job_id}: {record.status.value}, scanned {record.scanned}, "
-                    f"published {record.published}, up to date {record.skipped_up_to_date}"
-                )
+                return _summary(record)
         raise AssertionError(args.command)
     finally:
         await producer.close()

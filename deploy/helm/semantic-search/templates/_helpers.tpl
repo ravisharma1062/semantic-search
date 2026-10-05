@@ -16,10 +16,29 @@ app.kubernetes.io/instance: {{ .root.Release.Name }}
 app.kubernetes.io/component: {{ .mode }}
 {{- end }}
 
-{{/* Pod spec shared by all modes. Call with (dict "root" $ "mode" "api" "cfg" .Values.api "container" <extra container yaml>). */}}
+{{/* Pod spec shared by all modes. Call with (dict "root" $ "mode" "api" "cfg" .Values.api "container" <extra container yaml> "imageTag" <optional tag>). */}}
 {{- define "ss.podSpec" -}}
 serviceAccountName: {{ include "ss.fullname" .root }}-{{ .mode }}
 automountServiceAccountToken: false
+{{- if .root.Values.scheduling.enabled }}
+# Spread the pods over nodes and zones, so one node or zone failure does not take all of them.
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchLabels:
+              {{- include "ss.selectorLabels" (dict "root" .root "mode" .mode) | nindent 14 }}
+topologySpreadConstraints:
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        {{- include "ss.selectorLabels" (dict "root" .root "mode" .mode) | nindent 8 }}
+{{- end }}
 securityContext:
   runAsNonRoot: true
   runAsUser: 10001
@@ -28,7 +47,7 @@ securityContext:
     type: RuntimeDefault
 containers:
   - name: {{ .mode }}
-    image: "{{ .root.Values.image.repository }}:{{ .root.Values.image.tag | default .root.Chart.AppVersion }}"
+    image: "{{ .root.Values.image.repository }}:{{ .imageTag | default .root.Values.image.tag | default .root.Chart.AppVersion }}"
     imagePullPolicy: {{ .root.Values.image.pullPolicy }}
     {{- with .cfg.command }}
     command:

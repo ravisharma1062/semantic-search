@@ -24,7 +24,7 @@ A Python service that adds semantic search, reranking and RAG (answers with cita
 - Tests: pytest, pytest-asyncio, pytest-cov, hypothesis, Testcontainers, respx. Quality: ruff, mypy (strict)
 - Packaging: uv, Docker, Helm
 
-Approved beyond the list above (decided in the project): PyYAML (through `pydantic-settings[yaml]`), `redis` (redis-py), `tokenizers` (Hugging Face, for token counts), `hypothesis`, `pytest-cov`. The Elasticsearch client is pinned to `>=8.15,<9`: a 9.x client cannot talk to an 8.x server. No OpenAI SDK: OpenAI is called over plain HTTP.
+Approved beyond the list above (decided in the project): PyYAML (through `pydantic-settings[yaml]`), `redis` (redis-py), `tokenizers` (Hugging Face, for token counts), `hypothesis`, `pytest-cov`, and for telemetry `prometheus-client`, `opentelemetry-api`, `opentelemetry-sdk`, `opentelemetry-exporter-otlp-proto-http` (all named in the stack above). Langfuse is called over its HTTP API without its SDK. `pip-audit` and Trivy run in CI only and are not dependencies. The Elasticsearch client is pinned to `>=8.15,<9`: a 9.x client cannot talk to an 8.x server. No OpenAI SDK: OpenAI is called over plain HTTP.
 
 Do not add any new dependency without asking. All libraries need security approval.
 
@@ -35,15 +35,21 @@ uv sync                                   # install dependencies
 uv run pytest -q                          # unit tests (no Docker)
 uv run pytest -q -m integration           # integration tests (Docker: real Kafka, Elasticsearch, Redis)
 uv run ruff check . && uv run ruff format --check .
-uv run mypy src tests
+uv run mypy                               # src, tests, eval, loadtest (the file list is in pyproject.toml)
+PYTHONPATH=src uv run python -m app.api.openapi_export --check   # openapi/openapi.yaml is the current contract (without --check it rewrites the file)
+uv run pytest -q -m access                # access isolation tests, unit and real Elasticsearch (required for merging)
 uv run pytest -q --cov --cov-report= && uv run pytest -q -m integration --cov --cov-append --cov-report= && uv run coverage report   # ingestion and store, threshold in pyproject.toml
 uv run uvicorn app.main:app --reload      # run the API locally
 docker compose -f deploy/local/docker-compose.yml up -d   # local Elasticsearch, Kafka, Redis, fake model server
-uv run python -m app.jobs.index_admin --help   # index versions, alias switch (runbook: docs/local-dev.md)
-uv run python -m app.jobs.cli --help           # backfill and reconcile (runbook: docs/runbooks/backfill.md)
+uv run python -m app.jobs.index_admin --help   # index versions, alias switch (runbook: docs/runbooks/06-switch-alias.md)
+uv run python -m app.jobs.cli --help           # backfill, run-requested, reconcile (runbook: docs/runbooks/backfill.md)
+uv run python -m app.jobs.dlq_replay --help    # dead-letter replay (runbook 3)
+uv run python -m app.jobs.snapshot --help      # snapshots and restore (runbook 7)
+uv run python -m eval.runner --help            # retrieval evaluation. eval.rag_eval for answers, eval.experiments for the matrix
+uv run python -m loadtest.run --help           # load test (docs/performance.md). loadtest.canary_check judges a canary
 ```
 
-Before you say a task is done, all of these must pass: ruff, mypy, pytest (unit and integration). If a check cannot run (no Docker, no network, a blocked tool), say so plainly. Never report it as passed.
+Before you say a task is done, all of these must pass: ruff, mypy, the contract check, pytest (unit, access and integration). If a check cannot run (no Docker, no network, a blocked tool), say so plainly. Never report it as passed.
 
 `APP_MODE` selects the process: `api`, `worker` (the indexing worker) or `batch` (idle unless a Helm `command` runs a job).
 
@@ -52,28 +58,34 @@ Before you say a task is done, all of these must pass: ruff, mypy, pytest (unit 
 ```
 src/app/
   main.py            FastAPI app factory
-  api/               routers: search, answer, admin, health
-  core/              settings, logging, errors, retry helper, JSON HTTP client, adaptive limiter
+  services.py        the objects the routers use (search, answer, admin, telemetry), built at startup
+  api/               routers: search, answer (and SSE stream), admin, health, metrics. schemas, contract
+  core/              settings, logging, errors, security (tokens, identity), retry helper, circuit breaker,
+                     JSON HTTP client, adaptive limiter
   ingestion/         events, Kafka consumer loop and adapters, offsets, DLQ, source reader,
                      normalizer, tokens, chunker, indexer, state store, worker loop, runtime
-  retrieval/         query builder, ACL filter, hybrid searcher (task T2.1)
-  rerank/            Reranker interface and providers
+  retrieval/         query builder, ACL filter, hybrid searcher, search service, scoped cache
+  rerank/            Reranker interface, in-house provider, guard (timeout and breaker)
   embeddings/        Embedder interface, in-house and OpenAI providers, Redis query cache, factory
-  llm/               LLMClient interface and providers
-  rag/               context builder, answer service, citations, gates
+  llm/               LLMClient interface, OpenAI-compatible provider (in-house and OpenAI), guard, factory
+  rag/               context builder, gate, prompt loader, citations, PII masker, guardrails, answer service, stream
   store/             Elasticsearch client factory and error mapping, templates, aliases
-  observability/     metrics, tracing, log filters
-  jobs/              backfill producer, reconciliation, job store, rate limit, scan, CLIs
-prompts/             versioned prompt files
+  observability/     metrics (Prometheus), tracing (OpenTelemetry), Langfuse sink, audit, helpers
+  jobs/              backfill producer, reconciliation, job store, scan, admin use cases, DLQ replay,
+                     snapshots, index admin, CLIs
+prompts/             versioned prompt files (answer and judge prompts)
 config/              yaml per environment (base, dev, test, prod)
 openapi/             API contract shared with the Java team
-eval/                evaluation set and runner
+eval/                evaluation set, retrieval runner, experiment matrix, RAG evaluation
+loadtest/            load generator, statistics, canary check
 tests/unit  tests/integration  tests/fakes
-deploy/              Dockerfile, Helm charts (semantic-search, embedding-server), local docker-compose
-docs/                HLD.md, decisions/ (one record per task), runbooks/, local-dev.md
+deploy/              Dockerfile, Helm charts (semantic-search, embedding-server), local docker-compose,
+                     observability (alert rules, Grafana dashboard), environments (values per environment)
+docs/                HLD.md, decisions/ (one record per task or phase), runbooks/, performance.md,
+                     observability.md, threat-model-check.md, local-dev.md
 ```
 
-Done so far: phase 1 (T1.1 to T1.8, the indexing pipeline) is committed, except T1.9 (Java team). Next: phase 2, hybrid search (T2.1). See `BACKLOG.md` and `docs/decisions/`.
+Done so far: all five phases are implemented (T1.1 to T5.5), except what belongs to other teams (T1.9 and T2.3 for the Java app) and what needs real systems: real models and GPUs, the business evaluation set, a real cluster for load tests and for the deploy pipeline, security approvals. Each of those is listed as open in the decision records, `docs/performance.md` and `docs/threat-model-check.md`. See `BACKLOG.md` and `docs/decisions/`.
 
 ## Rules that must never be broken
 
@@ -114,7 +126,11 @@ Done so far: phase 1 (T1.1 to T1.8, the indexing pipeline) is committed, except 
 - Test the failure paths: timeouts, partial bulk failures, duplicate and out-of-order messages, deleted documents, empty documents, crash and restart.
 - A test that never fails proves nothing: when a test passes at once, check that it can fail (log capture, mock scope, blocking calls in async tests).
 - Coverage of `ingestion` and `store` is measured with unit and integration tests together (threshold in `pyproject.toml`).
-- Quality tests (retrieval and RAG metrics) live in `eval/` and run separately.
+- Quality tests (retrieval and RAG metrics) live in `eval/` and run separately. Their numbers on the synthetic set prove that the runner works, not which setting is best.
+- Access isolation tests carry the marker `access` (`pytest -m access`) and block the merge. A query-inventory test fails if a search call appears outside `retrieval`. Any new place that sends text to a model (reranker, LLM, embedder) needs a test that it only sees chunks the user may read.
+- A canary-text test (`tests/unit/test_observability.py`) checks that no text reaches logs, metrics, spans, LLM telemetry or error responses. Extend it when you add a new path that handles text.
+- The OpenAPI file is generated: change the code, run `app.api.openapi_export`, commit the result. CI fails if it is stale.
+- Real services find what fakes cannot (for example Elasticsearch rejected `highlight` with the rrf retriever, and snapshot names must be lowercase). When a path talks to Elasticsearch, Kafka or Redis, add an integration test.
 
 ## How to work (important)
 
@@ -138,8 +154,8 @@ Done so far: phase 1 (T1.1 to T1.8, the indexing pipeline) is committed, except 
 - Acceptance criteria in `BACKLOG.md` are met.
 - Tests added and passing. ruff and mypy clean.
 - No rule above is broken.
-- Docs and OpenAPI updated if needed.
-- Metrics and logs added for new paths, without sensitive text.
+- Docs and OpenAPI updated if needed (the contract check passes).
+- Metrics and logs added for new paths, without sensitive text. A metric that an alert or dashboard uses must exist (a test checks it).
 
 ## Do not
 

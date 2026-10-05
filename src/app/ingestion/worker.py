@@ -13,6 +13,7 @@ to repeat: chunk IDs are deterministic, so a second run overwrites the same chun
 
 import hashlib
 import json
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -30,6 +31,8 @@ from app.ingestion.indexer import Indexer
 from app.ingestion.normalizer import normalize_document
 from app.ingestion.source import SourceDocument, SourceReader
 from app.ingestion.state_store import IndexState, IndexStatus, StateStore
+from app.observability.metrics import get_metrics
+from app.observability.tracing import span
 
 _log = structlog.get_logger(__name__)
 
@@ -111,11 +114,18 @@ class IndexingWorker:
 
     async def handle(self, event: IndexEvent, context: HandlerContext) -> None:
         """Process one event. Raises on failure, so the consumer retries it."""
+        metrics = get_metrics()
+        started = time.perf_counter()
         try:
-            outcome = await self.process(event, context)
+            with span("ingest.event", item_id=event.item_id, event_type=event.event_type.value):
+                outcome = await self.process(event, context)
         except Exception as exc:
+            metrics.events.labels("failed").inc()
             await self._record_failure(event.item_id, exc)
             raise
+        finally:
+            metrics.event_duration.observe(time.perf_counter() - started)
+        metrics.events.labels(outcome.value).inc()
         _log.info("event_processed", item_id=event.item_id, outcome=outcome.value)
 
     async def _record_failure(self, item_id: str, error: Exception) -> None:
