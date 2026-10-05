@@ -42,7 +42,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Lint
-        run: helm lint deploy/helm/semantic-search
+        run: |
+          helm lint deploy/helm/semantic-search
+          helm lint deploy/helm/embedding-server
       - name: Render every mode
         run: |
           helm template ci deploy/helm/semantic-search --set batch.enabled=true > /dev/null

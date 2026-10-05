@@ -1,0 +1,6 @@
+apiVersion: v2
+name: embedding-server
+description: Embedding model server (Hugging Face Text Embeddings Inference or an approved equivalent) on GPU
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
