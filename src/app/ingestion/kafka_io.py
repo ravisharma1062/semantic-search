@@ -69,6 +69,12 @@ class MessageProducer(Protocol):
         """Publish one message. Raises ``UpstreamUnavailableError`` if it was not delivered."""
         ...
 
+    async def send_batch(
+        self, topic: str, items: Sequence[tuple[bytes | None, bytes | None]]
+    ) -> None:
+        """Publish many (key, value) messages and wait until the broker has all of them."""
+        ...
+
     async def close(self) -> None:
         """Flush and close."""
         ...

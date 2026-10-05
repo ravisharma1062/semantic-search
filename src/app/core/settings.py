@@ -7,6 +7,7 @@ Lists are written as JSON.
 """
 
 import os
+from datetime import date
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
@@ -123,6 +124,32 @@ class IngestionSettings(BaseModel):
     backfill_max_in_flight: int = Field(2, ge=1)
     heartbeat_file: str = "/tmp/worker-alive"  # noqa: S108 (the pod has its own /tmp)
     heartbeat_interval_s: float = Field(10.0, gt=0)
+
+
+class WaveSpec(BaseModel):
+    """One backfill wave (HLD section 22): which documents. Waves may overlap: a document that
+    is already indexed is skipped cheaply."""
+
+    number: int = Field(ge=1)
+    name: str = ""
+    doc_types: list[str] = []
+    created_from: date | None = None
+    created_to: date | None = None
+
+
+class BackfillSettings(BaseModel):
+    """The backfill producer and the reconciliation job (task T1.7)."""
+
+    job_index: str = "doc_index_jobs"
+    # A field of the source index with a unique value per document, normally ITEM_ID as a keyword.
+    # The scan sorts by it, so it can continue after a pause of any length. To confirm with the
+    # Java team: if ITEM_ID is only the document _id, a keyword copy is needed.
+    scan_sort_field: str = "item_id"
+    scan_size: int = Field(500, ge=1)
+    rate_per_second: float = Field(200.0, gt=0)
+    skip_up_to_date: bool = True
+    waves: list[WaveSpec] = []
+    reconcile_max_items: int | None = Field(None, ge=1)
 
 
 class KafkaSettings(BaseModel):
@@ -255,6 +282,7 @@ class Settings(BaseSettings):
     elasticsearch: ElasticsearchSettings
     source: SourceSettings = SourceSettings()
     store: StoreSettings = StoreSettings()
+    backfill: BackfillSettings = BackfillSettings()
     ingestion: IngestionSettings = IngestionSettings()
     normalizer: NormalizerSettings = NormalizerSettings()
     kafka: KafkaSettings
