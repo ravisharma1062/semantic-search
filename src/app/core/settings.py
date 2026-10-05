@@ -20,6 +20,8 @@ from pydantic_settings import (
     YamlConfigSettingsSource,
 )
 
+from app.core.retry import RetryPolicy
+
 _DEFAULT_CONFIG_DIR = Path(__file__).resolve().parents[3] / "config"
 
 
@@ -72,6 +74,24 @@ class KafkaSettings(BaseModel):
     retry_topic: str
     dlq_topic: str
     consumer_group: str
+    backfill_consumer_group: str
+    request_timeout_s: float = Field(10.0, gt=0)
+    producer_timeout_s: float = Field(30.0, gt=0)
+
+
+class ConsumerSettings(BaseModel):
+    """Behaviour of the indexing consumer (HLD section 15, Kafka design)."""
+
+    max_in_flight: int = Field(8, ge=1)
+    poll_batch_size: int = Field(100, ge=1)
+    poll_timeout_s: float = Field(1.0, gt=0)
+    commit_interval_s: float = Field(1.0, gt=0)
+    quick_retries: int = Field(3, ge=1)
+    quick_retry_initial_delay_s: float = Field(0.2, ge=0)
+    retry_delay_s: float = Field(60.0, ge=0)
+    max_retries: int = Field(5, ge=0)
+    shutdown_timeout_s: float = Field(30.0, gt=0)
+    rebalance_timeout_s: float = Field(20.0, gt=0)
 
 
 class RedisSettings(BaseModel):
@@ -144,6 +164,8 @@ class Settings(BaseSettings):
     search: SearchSettings
     elasticsearch: ElasticsearchSettings
     kafka: KafkaSettings
+    consumer: ConsumerSettings = ConsumerSettings()
+    retry: RetryPolicy = RetryPolicy()
     redis: RedisSettings
     embedding: EmbeddingSettings
     reranker: RerankerSettings

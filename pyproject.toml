@@ -9,15 +9,24 @@ dependencies = [
     "pydantic",
     "pydantic-settings[yaml]",
     "structlog",
+    "confluent-kafka>=2.15.1",
+    "elasticsearch[async]>=8.15,<9",
+    "tenacity>=9.1.4",
+    "httpx>=0.28.1",
+    "redis>=8.1.0",
+    "tokenizers>=0.23.2",
 ]
 
 [dependency-groups]
 dev = [
-    "httpx",
+    "hypothesis>=6.168.4",
     "mypy",
     "pytest",
     "pytest-asyncio",
+    "pytest-cov>=7.1.0",
+    "respx>=0.23.1",
     "ruff",
+    "testcontainers>=4.15.0",
 ]
 
 [tool.uv]
