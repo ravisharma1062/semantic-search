@@ -43,6 +43,7 @@ async def search(
         mode=body.mode,
         filters=body.filters,
         group_by_document=body.group_by_document,
+        rerank=body.rerank,
     )
     _log.info(
         "search_done",

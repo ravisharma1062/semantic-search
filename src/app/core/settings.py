@@ -237,13 +237,17 @@ class EmbeddingSettings(BaseModel):
 
 
 class RerankerSettings(BaseModel):
-    """Reranker provider."""
+    """Reranker provider (HLD section 6). A cross-encoder re-orders the top candidates."""
 
     provider: Literal["inhouse"] = "inhouse"
     model: str
     endpoint: str
     enabled: bool = True
     timeout_s: float = Field(1.0, gt=0)
+    truncate: bool = False
+    max_concurrency: int = Field(4, ge=1)
+    breaker_failures: int = Field(3, ge=1)
+    breaker_cooldown_s: float = Field(10.0, gt=0)
 
 
 class LlmSettings(BaseModel):

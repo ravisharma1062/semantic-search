@@ -12,6 +12,7 @@ from redis.asyncio import Redis
 
 from app.core.settings import Settings
 from app.embeddings.factory import create_embedder, create_http_client
+from app.rerank.factory import create_reranker
 from app.retrieval.query import QueryBuilder
 from app.retrieval.searcher import HybridSearcher
 from app.retrieval.service import SearchService
@@ -55,5 +56,8 @@ async def build_services(settings: Settings) -> Services:
         settings.elasticsearch,
         settings.api.request_retry,
     )
-    search = SearchService(embedder=embedder, searcher=searcher, settings=settings)
+    reranker = create_reranker(settings.reranker, http, settings.api.request_retry)
+    search = SearchService(
+        embedder=embedder, searcher=searcher, settings=settings, reranker=reranker
+    )
     return Services(search=search, closers=[es.close, http.aclose, redis.aclose])

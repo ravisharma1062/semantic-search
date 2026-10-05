@@ -22,6 +22,7 @@ from app.core.errors import (
 from app.core.security import Identity
 from app.core.settings import Settings
 from app.embeddings.base import Embedder
+from app.rerank.base import Reranker
 from app.retrieval.acl import AclFilter
 from app.retrieval.filters import SearchFilters
 from app.retrieval.models import SearchHit, SearchOutcome
@@ -60,10 +61,12 @@ class SearchService:
         embedder: Embedder,
         searcher: HybridSearcher,
         settings: Settings,
+        reranker: Reranker | None = None,
     ) -> None:
         self._embedder = embedder
         self._searcher = searcher
         self._settings = settings
+        self._reranker = reranker
 
     async def search(
         self,
@@ -74,8 +77,14 @@ class SearchService:
         mode: RequestMode = "hybrid",
         filters: SearchFilters | None = None,
         group_by_document: bool = False,
+        rerank: bool | None = None,
     ) -> SearchResult:
-        """Search within the user's rights and within the time budget."""
+        """Search within the user's rights and within the time budget.
+
+        ``rerank`` switches the reranker on or off for this request. ``None`` follows the
+        setting ``reranker.enabled``. If the reranker fails or is slow, the RRF order is
+        returned and ``mode_used`` does not say ``+rerank``.
+        """
         cfg = self._settings.search
         if not self._settings.feature_flags.semantic_search:
             raise UpstreamUnavailableError("Semantic search is switched off")
@@ -83,18 +92,44 @@ class SearchService:
         if size < 1 or not query.strip():
             raise InvalidRequestError("Empty query")
         acl = AclFilter.from_identity(identity)
+        wanted = self._settings.reranker.enabled if rerank is None else rerank
+        use_rerank = wanted and self._reranker is not None
+        fetch = max(size, cfg.rerank_top_n) if use_rerank else size
         started = time.perf_counter()
+        reranked = False
         try:
             async with asyncio.timeout(cfg.timeout_ms / 1000):
-                outcome = await self._find(query, acl, filters or SearchFilters(), size, mode)
+                outcome = await self._find(query, acl, filters or SearchFilters(), fetch, mode)
+                hits = outcome.hits
+                if use_rerank and hits:
+                    hits, reranked = await self._rerank(query, hits)
         except TimeoutError as exc:
             raise UpstreamTimeoutError("Search budget exceeded") from exc
-        hits = best_chunk_per_document(outcome.hits) if group_by_document else outcome.hits
+        if group_by_document:
+            hits = best_chunk_per_document(hits)
         return SearchResult(
-            mode_used=self._mode_used(outcome),
+            mode_used=self._mode_used(outcome) + ("+rerank" if reranked else ""),
             hits=hits[:size],
             took_ms=round((time.perf_counter() - started) * 1000),
         )
+
+    async def _rerank(self, query: str, hits: list[SearchHit]) -> tuple[list[SearchHit], bool]:
+        """Reorder the best candidates. Any problem keeps the RRF order."""
+        reranker = self._reranker
+        if reranker is None:
+            return hits, False
+        limit = self._settings.search.rerank_top_n
+        candidates, rest = hits[:limit], hits[limit:]
+        passages = [
+            f"{h.section_title}\n{h.content}" if h.section_title else h.content for h in candidates
+        ]
+        try:
+            ordering = await reranker.rerank(query, passages, len(candidates))
+            reordered = [candidates[i].model_copy(update={"score": s}) for i, s in ordering]
+        except (AppError, TimeoutError, IndexError) as exc:
+            _log.warning("rerank_skipped", error_type=type(exc).__name__)
+            return hits, False
+        return [*reordered, *rest], True
 
     @staticmethod
     def _mode_used(outcome: SearchOutcome) -> str:
