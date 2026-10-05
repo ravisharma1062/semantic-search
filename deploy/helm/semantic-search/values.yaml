@@ -20,6 +20,7 @@ config:
   # APP_RERANKER__ENDPOINT: <reranker-server-url>
   # APP_LLM__ENDPOINT: <llm-server-url>
   # APP_LLM__MODEL: <approved-model-name>
+  # APP_CHUNKING__TOKENIZER_FILE: /models/bge-m3/tokenizer.json  # the model's tokenizer, mounted
 
 api:
   enabled: true
@@ -29,17 +30,25 @@ api:
     requests: {cpu: "1", memory: 2Gi}
     limits: {cpu: "2", memory: 4Gi}
 
-# The worker is an idle stub until task T1.2, so it has no probes yet.
+# The worker has no HTTP port. It touches a heartbeat file, and the liveness probe checks its age.
 worker:
   enabled: true
   replicaCount: 2
+  heartbeatFile: /tmp/worker-alive  # must match APP_INGESTION__HEARTBEAT_FILE
+  heartbeatMaxAgeSeconds: 60
   resources:
     requests: {cpu: "2", memory: 4Gi}
     limits: {cpu: "2", memory: 4Gi}
 
 # The batch job runs on demand: helm template/upgrade with --set batch.enabled=true.
+# The command picks the job. Examples:
+#   [python, -m, app.jobs.cli, backfill, start, --wave, "1"]
+#   [python, -m, app.jobs.cli, reconcile, --wave, "1", --max-items, "100000"]
+# A job that is stopped (SIGTERM, node loss) pauses itself and continues from its cursor when the
+# Job is started again with the same job ID.
 batch:
   enabled: false
+  command: [python, -m, app.jobs.cli, backfill, status]
   parallelism: 1
   backoffLimit: 2
   resources:

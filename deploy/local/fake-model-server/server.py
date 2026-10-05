@@ -16,6 +16,7 @@ from pydantic import BaseModel
 DIMS = int(os.environ.get("FAKE_DIMS", "1024"))
 
 app = FastAPI(title="Fake model server")
+STATS = {"embed_requests": 0, "embed_texts": 0}
 
 
 class EmbedRequest(BaseModel):
@@ -49,8 +50,16 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/stats")
+async def stats() -> dict[str, int]:
+    """Counters for tests: how many embedding calls and texts were served."""
+    return dict(STATS)
+
+
 @app.post("/embed")
 async def embed(request: EmbedRequest) -> list[list[float]]:
+    STATS["embed_requests"] += 1
+    STATS["embed_texts"] += len(request.inputs)
     return [_vector(text) for text in request.inputs]
 
 

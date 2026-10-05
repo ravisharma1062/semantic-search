@@ -15,11 +15,12 @@ kafka:
   retry_topic: retry
   dlq_topic: dlq
   consumer_group: group
+  backfill_consumer_group: backfill-group
 redis: {url: "redis://base.test:6379/0"}
 embedding: {model: m, endpoint: "http://e.test"}
 reranker: {model: r, endpoint: "http://r.test"}
 llm: {model: l, endpoint: "http://l.test"}
-chunking: {version: v1}
+chunking: {version: v1, tokenizer: whitespace}
 """
 
 

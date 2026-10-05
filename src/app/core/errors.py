@@ -29,6 +29,18 @@ class AppError(Exception):
         super().__init__(self.message)
 
 
+class NonRetryableError(AppError):
+    """A processing error that retrying cannot fix. The message goes straight to the DLQ."""
+
+    default_message = "Non-retryable processing error"
+
+
+class SourceNotReadyError(AppError):
+    """The source document is not visible (yet). The event is tried again later."""
+
+    default_message = "Source document not available yet"
+
+
 class InvalidRequestError(AppError):
     """Bad input or unknown filter."""
 
@@ -67,6 +79,12 @@ class UpstreamUnavailableError(AppError):
     code = ErrorCode.UPSTREAM_UNAVAILABLE
     http_status = 503
     default_message = "Upstream service unavailable"
+
+
+class UpstreamOverloadedError(UpstreamUnavailableError):
+    """The upstream asked us to slow down (HTTP 429 or 503). Callers lower their parallelism."""
+
+    default_message = "Upstream service overloaded"
 
 
 class UpstreamTimeoutError(AppError):

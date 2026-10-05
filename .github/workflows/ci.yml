@@ -31,12 +31,13 @@ jobs:
       - name: Mypy
         run: uv run mypy src tests
       - name: Unit tests
-        run: uv run pytest -q
+        run: uv run pytest -q --cov --cov-report=
       - name: Integration tests
-        # Docker is available on ubuntu-latest, so Testcontainers work from task T1.2.
-        # Exit code 5 means "no tests collected", which is true until T1.2.
-        # Remove the exit-code check in T1.2.
-        run: uv run pytest -q -m integration || [ $? -eq 5 ]
+        # Docker is available on ubuntu-latest, so Testcontainers work.
+        run: uv run pytest -q -m integration --cov --cov-append --cov-report=
+      - name: Coverage of ingestion and store
+        # Unit and integration tests together. The threshold (fail_under) is in pyproject.toml.
+        run: uv run coverage report
 
   helm:
     name: Helm chart
@@ -44,7 +45,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Lint
-        run: helm lint deploy/helm/semantic-search
+        run: |
+          helm lint deploy/helm/semantic-search
+          helm lint deploy/helm/embedding-server
       - name: Render every mode
         run: |
           helm template ci deploy/helm/semantic-search --set batch.enabled=true > /dev/null
