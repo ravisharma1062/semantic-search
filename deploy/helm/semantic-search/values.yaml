@@ -20,6 +20,7 @@ config:
   # APP_RERANKER__ENDPOINT: <reranker-server-url>
   # APP_LLM__ENDPOINT: <llm-server-url>
   # APP_LLM__MODEL: <approved-model-name>
+  # APP_CHUNKING__TOKENIZER_FILE: /models/bge-m3/tokenizer.json  # the model's tokenizer, mounted
 
 api:
   enabled: true

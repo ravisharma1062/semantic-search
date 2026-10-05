@@ -75,6 +75,12 @@ class UpstreamUnavailableError(AppError):
     default_message = "Upstream service unavailable"
 
 
+class UpstreamOverloadedError(UpstreamUnavailableError):
+    """The upstream asked us to slow down (HTTP 429 or 503). Callers lower their parallelism."""
+
+    default_message = "Upstream service overloaded"
+
+
 class UpstreamTimeoutError(AppError):
     """A step took too long."""
 

@@ -1,0 +1,37 @@
+# Embedding server for bge-m3 (HLD sections 12, 16). See docs/embedding-server.md.
+# Everything in angle brackets is a placeholder: use the internal registry and the approved
+# pinned versions. Pods never download models: the model files are on a volume that was filled
+# from the internal artifact repository, with checksum check and security scan.
+
+image:
+  # The approved TEI image from the internal registry, GPU build for your GPU architecture.
+  repository: <internal-registry>/text-embeddings-inference
+  tag: <pinned-version>
+  pullPolicy: IfNotPresent
+
+model:
+  # An existing, read-only volume that holds the model folder (config, weights, tokenizer).
+  existingClaim: <model-volume-claim>
+  path: /models/bge-m3
+
+replicaCount: 2  # at least 2 for availability
+
+server:
+  port: 8080
+  # Starting values. The GPU benchmark (work package 0.4) sets the final numbers.
+  maxClientBatchSize: 64
+  maxBatchTokens: 16384
+  maxConcurrentRequests: 128
+  autoTruncate: false  # the service sends chunks within the model limit and wants an error otherwise
+
+resources:
+  requests: {cpu: "2", memory: 8Gi}
+  limits: {memory: 16Gi, nvidia.com/gpu: 1}
+
+nodeSelector: {}  # the GPU node pool
+tolerations: []
+
+# Ready only after the model is loaded and warmed up.
+startupProbe:
+  failureThreshold: 60
+  periodSeconds: 5

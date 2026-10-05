@@ -143,3 +143,27 @@ async def es_client(es_url: str) -> AsyncIterator[AsyncElasticsearch]:
     client = create_es_client(ElasticsearchSettings(hosts=[es_url], state_index="state_test"))
     yield client
     await client.close()
+
+
+REDIS_IMAGE = "redis:7-alpine"
+
+
+@pytest.fixture(scope="session")
+def redis_url() -> Iterator[str]:
+    """A single Redis."""
+    port = _free_port()
+    container = DockerContainer(REDIS_IMAGE).with_bind_ports(6379, port)
+    with container:
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=1) as conn:
+                    conn.sendall(b"PING" + bytes([13, 10]))  # the port opens before Redis is ready
+                    if conn.recv(16).startswith(b"+PONG"):
+                        break
+            except OSError:
+                pass
+            if time.monotonic() > deadline:
+                raise RuntimeError("Redis did not become ready")
+            time.sleep(0.5)
+        yield f"redis://127.0.0.1:{port}/0"

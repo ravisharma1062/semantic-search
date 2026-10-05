@@ -131,20 +131,34 @@ class ConsumerSettings(BaseModel):
 
 
 class RedisSettings(BaseModel):
-    """Redis connection."""
+    """Redis connection. Redis is only a cache: an outage must never fail a request."""
 
     url: str
     timeout_ms: int = Field(50, ge=1)
+    breaker_failures: int = Field(3, ge=1)
+    breaker_cooldown_s: float = Field(10.0, gt=0)
 
 
 class EmbeddingSettings(BaseModel):
-    """Embedding provider."""
+    """Embedding provider. The in-house TEI-style server is the default."""
 
     provider: Literal["inhouse", "openai"] = "inhouse"
     model: str
+    model_version: str = "1"
     endpoint: str
     dims: int = Field(1024, ge=1)
-    timeout_s: float = Field(0.5, gt=0)
+    timeout_s: float = Field(0.5, gt=0)  # one query embedding
+    document_timeout_s: float = Field(10.0, gt=0)  # one batch of chunks
+    batch_size: int = Field(32, ge=1)
+    max_concurrency: int = Field(4, ge=1)
+    truncate: bool = False
+    cache_ttl_s: int = Field(3600, ge=1)
+    # OpenAI is optional and off by default. It needs provider "openai" AND allow_external,
+    # and may only be used for data classes that security has approved (HLD section 9).
+    allow_external: bool = False
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_api_key: SecretStr | None = None
+    proxy: str | None = None
 
 
 class RerankerSettings(BaseModel):

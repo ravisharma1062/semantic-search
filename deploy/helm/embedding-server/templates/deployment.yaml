@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "es.fullname" . }}
+  labels:
+    {{- include "es.selectorLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "es.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "es.selectorLabels" . | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.server.port | quote }}
+        prometheus.io/path: /metrics
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: server
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --model-id={{ .Values.model.path }}
+            - --port={{ .Values.server.port }}
+            - --max-client-batch-size={{ .Values.server.maxClientBatchSize }}
+            - --max-batch-tokens={{ .Values.server.maxBatchTokens }}
+            - --max-concurrent-requests={{ .Values.server.maxConcurrentRequests }}
+            {{- if .Values.server.autoTruncate }}
+            - --auto-truncate
+            {{- end }}
+          env:
+            # Never reach out to the model hub: the model is on the volume.
+            - name: HF_HUB_OFFLINE
+              value: "1"
+            - name: HUGGINGFACE_HUB_CACHE
+              value: /tmp/hf-cache
+          ports:
+            - name: http
+              containerPort: {{ .Values.server.port }}
+          startupProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: {{ .Values.startupProbe.periodSeconds }}
+            failureThreshold: {{ .Values.startupProbe.failureThreshold }}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 20
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: model
+              mountPath: /models
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: model
+          persistentVolumeClaim:
+            claimName: {{ .Values.model.existingClaim }}
+            readOnly: true
+        - name: tmp
+          emptyDir: {}
