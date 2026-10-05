@@ -167,3 +167,49 @@ def redis_url() -> Iterator[str]:
                 raise RuntimeError("Redis did not become ready")
             time.sleep(0.5)
         yield f"redis://127.0.0.1:{port}/0"
+
+
+@dataclass(frozen=True)
+class ModelServer:
+    """The fake model server, running on a real port."""
+
+    url: str
+    dims: int
+
+    def stats(self) -> dict[str, int]:
+        """Counters of served embedding calls and texts."""
+        data: dict[str, int] = httpx.get(f"{self.url}/stats").json()
+        return data
+
+
+@pytest.fixture(scope="session")
+def model_server() -> Iterator[ModelServer]:
+    """deploy/local/fake-model-server on a free port (8-dimensional vectors)."""
+    import importlib.util
+    import os
+    import threading
+    from pathlib import Path
+
+    import uvicorn
+
+    path = Path(__file__).resolve().parents[2] / "deploy/local/fake-model-server/server.py"
+    os.environ["FAKE_DIMS"] = "8"
+    spec = importlib.util.spec_from_file_location("fake_model_server_e2e", path)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    port = _free_port()
+    server = uvicorn.Server(
+        uvicorn.Config(module.app, host="127.0.0.1", port=port, log_level="warning")
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 15
+    while not server.started:
+        if time.monotonic() > deadline:
+            raise RuntimeError("fake model server did not start")
+        time.sleep(0.05)
+    yield ModelServer(f"http://127.0.0.1:{port}", 8)
+    server.should_exit = True
+    thread.join(timeout=5)

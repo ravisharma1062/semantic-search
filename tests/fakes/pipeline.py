@@ -17,6 +17,7 @@ class FakeIndexer:
         self.calls: list[tuple[str, Any]] = []
         self.fail_bulk_with: Exception | None = None
         self.fail_bulk_after_windows: int | None = None
+        self.fail_bulk_calls: int | None = None  # fail only this many calls, then work again
         self._windows = 0
 
     def doc_chunks(self, item_id: str) -> list[dict[str, Any]]:
@@ -36,7 +37,11 @@ class FakeIndexer:
         if self.fail_bulk_with and (
             self.fail_bulk_after_windows is None or self._windows > self.fail_bulk_after_windows
         ):
-            raise self.fail_bulk_with
+            if self.fail_bulk_calls is None:
+                raise self.fail_bulk_with
+            if self.fail_bulk_calls > 0:
+                self.fail_bulk_calls -= 1
+                raise self.fail_bulk_with
         self.calls.append(("bulk_write", [c.chunk_id for c in chunks]))
         for chunk, vector in zip(chunks, vectors, strict=True):
             self.chunks[chunk.chunk_id] = {

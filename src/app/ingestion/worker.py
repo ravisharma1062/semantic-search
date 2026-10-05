@@ -134,6 +134,8 @@ class IndexingWorker:
         item_id = event.item_id
         state = await self._states.get(item_id)
         if event.event_type is EventType.DELETE:
+            if await self._newer_document_exists(item_id, event.doc_version):
+                return Outcome.STALE_EVENT  # the document was created again after this delete
             return await self._delete(item_id, state, event.doc_version)
 
         document = await self._source.get(item_id)
@@ -154,6 +156,18 @@ class IndexingWorker:
         if self._unchanged(state, content_hash):
             return await self._refresh_if_needed(document, state, metadata_hash)
         return await self._index(document, state, version, content_hash, metadata_hash)
+
+    async def _newer_document_exists(self, item_id: str, event_version: int | None) -> bool:
+        """Is there a document with a higher version than this delete event? Then the event is
+        old: an out-of-order delete must not remove a newer document."""
+        if event_version is None:
+            return False
+        document = await self._source.get(item_id)
+        return (
+            document is not None
+            and document.version is not None
+            and document.version > event_version
+        )
 
     @staticmethod
     def _is_stale(state: IndexState | None, version: int | None) -> bool:

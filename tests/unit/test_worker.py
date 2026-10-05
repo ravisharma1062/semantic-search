@@ -328,6 +328,24 @@ async def test_a_late_delete_of_an_old_version_does_not_remove_the_new_document(
     assert rig.states.states["ITEM-1"].status is IndexStatus.INDEXED
 
 
+async def test_a_late_delete_is_ignored_when_the_source_has_a_newer_document_and_no_state() -> None:
+    rig = Rig([_doc(version=5)])
+    assert await rig.run(_event("DELETE", version=3)) is Outcome.STALE_EVENT
+    assert "ITEM-1" not in rig.states.states  # nothing was recorded or deleted
+
+
+async def test_a_delete_without_a_version_is_trusted() -> None:
+    rig = Rig([_doc(version=5)])
+    await rig.run(_event(version=5))
+    assert await rig.run(_event("DELETE")) is Outcome.DELETED
+
+
+async def test_a_delete_of_the_current_version_is_applied() -> None:
+    rig = Rig([_doc(version=5)])
+    await rig.run(_event(version=5))
+    assert await rig.run(_event("DELETE", version=5)) is Outcome.DELETED
+
+
 async def test_an_old_version_of_the_document_is_ignored() -> None:
     rig = Rig([_doc(version=5)])
     await rig.run(_event(version=5))

@@ -42,6 +42,16 @@ markers = [
     "integration: needs Docker (real Elasticsearch and Kafka through Testcontainers)",
 ]
 
+[tool.coverage.run]
+# The pipeline packages (task T1.8). Unit and integration tests are measured together.
+source_pkgs = ["app.ingestion", "app.store"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 85
+show_missing = true
+skip_empty = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

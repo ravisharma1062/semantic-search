@@ -44,3 +44,10 @@ def test_chat_returns_not_found(client: TestClient) -> None:
     body = {"messages": [{"role": "user", "content": "synthetic question"}]}
     reply = client.post("/v1/chat/completions", json=body).json()
     assert reply["choices"][0]["message"]["content"] == "NOT_FOUND"
+
+
+def test_stats_count_embedding_calls_and_texts(client: TestClient) -> None:
+    assert client.get("/stats").json() == {"embed_requests": 0, "embed_texts": 0}
+    client.post("/embed", json={"inputs": ["a", "b", "c"]})
+    client.post("/embed", json={"inputs": ["d"]})
+    assert client.get("/stats").json() == {"embed_requests": 2, "embed_texts": 4}
