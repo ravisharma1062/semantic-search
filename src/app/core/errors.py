@@ -35,6 +35,12 @@ class NonRetryableError(AppError):
     default_message = "Non-retryable processing error"
 
 
+class SourceNotReadyError(AppError):
+    """The source document is not visible (yet). The event is tried again later."""
+
+    default_message = "Source document not available yet"
+
+
 class InvalidRequestError(AppError):
     """Bad input or unknown filter."""
 

@@ -4,7 +4,8 @@ Callers say which errors are safe to retry. Everything else, and cancellation, i
 """
 
 import asyncio
-from collections.abc import Awaitable, Callable
+import random
+from collections.abc import Awaitable, Callable, Iterator
 from typing import TypeVar
 
 from pydantic import BaseModel, Field
@@ -45,3 +46,13 @@ async def with_retries(
         return await operation()
 
     return await retrying(attempt)
+
+
+def backoff_delays(policy: RetryPolicy) -> Iterator[float]:
+    """The waits between attempts: exponential, capped, with jitter. ``attempts - 1`` values.
+
+    For callers that retry only a part of a call (a bulk request), which ``with_retries`` cannot.
+    """
+    for number in range(policy.attempts - 1):
+        base = min(policy.max_delay_s, policy.initial_delay_s * 2**number)
+        yield base + random.uniform(0, policy.jitter_s)  # noqa: S311 (jitter, not security)

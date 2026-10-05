@@ -105,7 +105,7 @@ def _loop(
     return ConsumerLoop(
         consumer=ConfluentConsumer(kafka, topics.group, config.rebalance_timeout_s),
         producer=ConfluentProducer(kafka),
-        handler=handler,
+        handler=lambda event, _context: handler(event),
         topics=[topics.live, topics.retry],
         retry_topic=topics.retry,
         dlq_topic=topics.dlq,

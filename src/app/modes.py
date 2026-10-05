@@ -1,7 +1,7 @@
-"""Run loop for the ``worker`` and ``batch`` modes.
+"""Signal handling and the idle loop of the ``batch`` mode.
 
-The real consumer (task T1.2) and batch jobs (task T1.7) replace the idle loop. Until then
-the process starts, logs and waits for a stop signal, so the Helm chart can be tested.
+The batch jobs (task T1.7) replace the idle loop. Until then the process starts, logs and waits
+for a stop signal, so the Helm chart can be tested. The ``worker`` mode is in ``ingestion.runtime``.
 """
 
 import asyncio

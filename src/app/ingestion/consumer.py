@@ -32,7 +32,21 @@ from app.ingestion.kafka_io import (
 )
 from app.ingestion.offsets import OffsetTracker
 
-EventHandler = Callable[[IndexEvent], Awaitable[None]]
+
+@dataclass(frozen=True)
+class HandlerContext:
+    """What the handler may need to know about this attempt."""
+
+    retry_count: int  # how often the event already went through the retry topic
+    max_retries: int
+
+    @property
+    def retries_exhausted(self) -> bool:
+        """True when a failure now would send the event to the DLQ."""
+        return self.retry_count >= self.max_retries
+
+
+EventHandler = Callable[[IndexEvent, HandlerContext], Awaitable[None]]
 
 _log = structlog.get_logger(__name__)
 
@@ -271,9 +285,10 @@ class ConsumerLoop:
     async def _execute(self, work: Work) -> bool:
         """Run the handler. True if the work is finished or safely handed on."""
         event = work.event
+        context = HandlerContext(work.retry_count, self._settings.max_retries)
         try:
             await with_retries(
-                lambda: self._handler(event),
+                lambda: self._handler(event, context),
                 policy=self._policy,
                 retry_if=lambda exc: not isinstance(exc, NonRetryableError),
                 sleep=self._sleep,

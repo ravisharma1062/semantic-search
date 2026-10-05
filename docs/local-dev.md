@@ -63,4 +63,19 @@ HPA, KEDA, PodDisruptionBudget, anti-affinity and NetworkPolicy come with task T
 ## Tests
 
 - `uv run pytest -q`: unit tests. No network and no Docker. Fakes are in `tests/fakes`.
-- `uv run pytest -q -m integration`: integration tests (Testcontainers). None exist before T1.2.
+- `uv run pytest -q -m integration`: integration tests (Testcontainers: real Kafka, Elasticsearch and Redis in Docker, a few minutes).
+
+## Index versions
+
+With the local stack running (`APP_ENV=dev`):
+
+```bash
+uv run python -m app.jobs.index_admin install-templates
+uv run python -m app.jobs.index_admin create-state-index
+uv run python -m app.jobs.index_admin create-index --version v1
+uv run python -m app.jobs.index_admin switch-alias --index doc_chunks_v1_bgem3 --allow-empty
+```
+
+Index names carry the version and the model. `show-alias` says where the alias points.
+To roll out a new model or chunker: create a new version, set `APP_STORE__WRITE_INDEX` for the
+re-index, check counts and the evaluation set, then `switch-alias`. Keep the old version for 14 days.

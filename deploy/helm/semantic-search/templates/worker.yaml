@@ -20,5 +20,14 @@ spec:
     spec:
       # Time for the worker to finish the current message before it is killed.
       terminationGracePeriodSeconds: 60
-      {{- include "ss.podSpec" (dict "root" . "mode" "worker" "cfg" .Values.worker) | nindent 6 }}
+      {{- $container := printf `livenessProbe:
+  exec:
+    command:
+      - sh
+      - -c
+      - test $(( $(date +%%s) - $(stat -c %%Y %s) )) -lt %d
+  initialDelaySeconds: 60
+  periodSeconds: 20
+  failureThreshold: 3` .Values.worker.heartbeatFile (int .Values.worker.heartbeatMaxAgeSeconds) }}
+      {{- include "ss.podSpec" (dict "root" . "mode" "worker" "cfg" .Values.worker "container" $container) | nindent 6 }}
 {{- end }}
