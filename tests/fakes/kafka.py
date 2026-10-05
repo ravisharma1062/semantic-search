@@ -150,6 +150,16 @@ class FakeProducer:
             raise UpstreamUnavailableError("publish failed")
         self.sent.append(self.broker.produce(topic, key, value, headers))
 
+    async def send_batch(
+        self, topic: str, items: Sequence[tuple[bytes | None, bytes | None]]
+    ) -> None:
+        """Publish many messages. All or nothing, like one acknowledged batch."""
+        if self.fail_times:
+            self.fail_times -= 1
+            raise UpstreamUnavailableError("publish failed")
+        for key, value in items:
+            self.sent.append(self.broker.produce(topic, key, value))
+
     async def close(self) -> None:
         """Nothing to flush."""
         self.closed = True

@@ -30,6 +30,10 @@ containers:
   - name: {{ .mode }}
     image: "{{ .root.Values.image.repository }}:{{ .root.Values.image.tag | default .root.Chart.AppVersion }}"
     imagePullPolicy: {{ .root.Values.image.pullPolicy }}
+    {{- with .cfg.command }}
+    command:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
     env:
       - name: APP_MODE
         value: {{ .mode | quote }}

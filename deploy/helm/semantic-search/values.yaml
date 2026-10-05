@@ -41,8 +41,14 @@ worker:
     limits: {cpu: "2", memory: 4Gi}
 
 # The batch job runs on demand: helm template/upgrade with --set batch.enabled=true.
+# The command picks the job. Examples:
+#   [python, -m, app.jobs.cli, backfill, start, --wave, "1"]
+#   [python, -m, app.jobs.cli, reconcile, --wave, "1", --max-items, "100000"]
+# A job that is stopped (SIGTERM, node loss) pauses itself and continues from its cursor when the
+# Job is started again with the same job ID.
 batch:
   enabled: false
+  command: [python, -m, app.jobs.cli, backfill, status]
   parallelism: 1
   backoffLimit: 2
   resources:

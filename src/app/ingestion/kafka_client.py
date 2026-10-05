@@ -184,6 +184,36 @@ class ConfluentProducer:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(self._executor, self._send, topic, key, value, headers)
 
+    def _send_batch(self, topic: str, items: Sequence[tuple[bytes | None, bytes | None]]) -> None:
+        failures: list[object] = []
+
+        def delivered(error: object, _message: object) -> None:
+            if error is not None:
+                failures.append(error)
+
+        try:
+            for key, value in items:
+                while True:
+                    try:
+                        self._producer.produce(topic, key=key, value=value, on_delivery=delivered)
+                        break
+                    except BufferError:  # the local queue is full: let it drain
+                        self._producer.poll(0.5)
+            remaining = self._producer.flush(self._timeout_s)
+        except KafkaException as exc:
+            raise UpstreamUnavailableError("Kafka publish failed") from exc
+        if remaining or failures:
+            raise UpstreamUnavailableError("Kafka publish failed")
+
+    async def send_batch(
+        self, topic: str, items: Sequence[tuple[bytes | None, bytes | None]]
+    ) -> None:
+        """Publish many messages with one wait for the acknowledgements."""
+        if not items:
+            return
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(self._executor, self._send_batch, topic, items)
+
     async def close(self) -> None:
         """Flush what is left and stop the thread."""
         loop = asyncio.get_running_loop()

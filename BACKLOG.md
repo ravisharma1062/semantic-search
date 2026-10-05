@@ -103,6 +103,7 @@ T3 and T4 can run in parallel after T2 if there are enough engineers.
 ### T1.7 Backfill producer and wave control (6-8 days)
 - **Goal:** Index existing documents in waves without hurting live traffic.
 - **Depends on:** T1.6.
+- **Note:** needs ITEM_ID as a keyword field in the source index (see `docs/decisions/0007-backfill-reconcile.md`, which also lists the rule 1 exception for the scan).
 - **Done when:**
   - A job scans the existing index in a stable order and publishes `ITEM_ID` events to the backfill topic with a wave number.
   - Speed is limited by configuration, and the job can pause and resume.
