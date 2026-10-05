@@ -24,6 +24,25 @@ class LLMOptions(BaseModel):
     temperature: float | None = None
 
 
+class Usage(BaseModel):
+    """Token counts of one call."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+
+class Completion(BaseModel):
+    """A full answer and what it cost."""
+
+    text: str
+    usage: Usage = Usage()
+
+
+def estimate_tokens(text: str) -> int:
+    """A rough token count (4 characters per token) for providers that do not report usage."""
+    return (len(text) + 3) // 4
+
+
 @runtime_checkable
 class LLMClient(Protocol):
     """Generates text from chat messages."""
@@ -34,6 +53,12 @@ class LLMClient(Protocol):
         self, messages: Sequence[ChatMessage], options: LLMOptions | None = None
     ) -> str:
         """Return the full answer."""
+        ...
+
+    async def complete(
+        self, messages: Sequence[ChatMessage], options: LLMOptions | None = None
+    ) -> Completion:
+        """Return the full answer with the token usage."""
         ...
 
     def stream(

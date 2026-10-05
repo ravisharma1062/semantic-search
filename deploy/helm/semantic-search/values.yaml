@@ -24,6 +24,8 @@ config:
   # APP_RERANKER__ENDPOINT: <reranker-server-url>
   # APP_LLM__ENDPOINT: <llm-server-url>
   # APP_LLM__MODEL: <approved-model-name>
+  # APP_FEATURE_FLAGS__RAG: "true"  # answers are released after search is stable
+  # APP_RAG__MIN_SCORE: "0.0"  # the gate, from the evaluation set
   # APP_CHUNKING__TOKENIZER_FILE: /models/bge-m3/tokenizer.json  # the model's tokenizer, mounted
 
 api:

@@ -251,14 +251,53 @@ class RerankerSettings(BaseModel):
 
 
 class LlmSettings(BaseModel):
-    """LLM provider."""
+    """LLM provider. The in-house server speaks the OpenAI chat API (for example vLLM)."""
 
     provider: Literal["inhouse", "openai"] = "inhouse"
     model: str
+    model_version: str = "1"
     endpoint: str
     max_output_tokens: int = Field(800, ge=1)
     temperature: float = Field(0.1, ge=0, le=2)
-    timeout_s: float = Field(30.0, gt=0)
+    timeout_s: float = Field(30.0, gt=0)  # whole answer
+    first_token_timeout_s: float = Field(3.0, gt=0)  # streaming: wait for the first piece
+    max_concurrency: int = Field(8, ge=1)
+    breaker_failures: int = Field(3, ge=1)
+    breaker_cooldown_s: float = Field(15.0, gt=0)
+    # OpenAI is optional and off by default: provider "openai" AND allow_external, and only for
+    # data classes that security has approved (HLD section 9).
+    allow_external: bool = False
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_api_key: SecretStr | None = None
+    proxy: str | None = None
+
+
+class GuardrailSettings(BaseModel):
+    """In-house guardrails (HLD section 7): PII masking and denied topics."""
+
+    mask_pii: bool = True
+    # Regular expressions. A question that matches one is refused before anything is searched.
+    denied_question_patterns: list[str] = []
+    # Regular expressions. A match in the answer replaces the answer by a refusal.
+    denied_answer_patterns: list[str] = []
+
+
+class RagSettings(BaseModel):
+    """Answer pipeline (HLD section 7)."""
+
+    prompt_version: str = "v1"
+    prompts_dir: str = "prompts"
+    max_chunks: int = Field(8, ge=1, le=20)
+    max_chunks_per_document: int = Field(3, ge=1)
+    context_token_budget: int = Field(3000, ge=100)
+    duplicate_similarity: float = Field(0.85, gt=0, le=1)
+    # The gate: if the best passage scored below this after reranking, the answer is NOT_FOUND
+    # and the LLM is not called. The value comes from the evaluation set. 0 switches the gate off.
+    # It is applied only when the reranker ran, because RRF scores have no absolute meaning.
+    min_score: float = Field(0.0, ge=0)
+    # "reject": an answer without valid citations is not shown. "flag": it is shown with a warning.
+    on_bad_citations: Literal["reject", "flag"] = "reject"
+    guardrails: GuardrailSettings = GuardrailSettings()
 
 
 class ChunkingSettings(BaseModel):
@@ -321,6 +360,7 @@ class Settings(BaseSettings):
     embedding: EmbeddingSettings
     reranker: RerankerSettings
     llm: LlmSettings
+    rag: RagSettings = RagSettings()
     chunking: ChunkingSettings
     feature_flags: FeatureFlags = FeatureFlags()
 

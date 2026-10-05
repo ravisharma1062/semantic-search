@@ -56,3 +56,50 @@ class SearchResponse(BaseModel):
     mode_used: str
     results: list[SearchResultItem]
     took_ms: int
+
+
+class AnswerRequest(BaseModel):
+    """``POST /v1/answer`` and ``POST /v1/answer/stream``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    question: str = Field(min_length=1, max_length=4000)
+    top_k: int | None = Field(default=None, ge=1, le=20)
+    filters: SearchFilters = Field(default_factory=SearchFilters)
+
+
+class CitationItem(BaseModel):
+    """A source of the answer. ``ref`` is the number used in the answer text."""
+
+    ref: int
+    doc_id: str
+    pages: list[int]
+    snippet: str
+
+
+class UsageItem(BaseModel):
+    """Token counts of the model call."""
+
+    input_tokens: int
+    output_tokens: int
+
+
+class AnswerResponse(BaseModel):
+    """The answer of ``POST /v1/answer``.
+
+    ``found`` is false when there is no answer. ``reason`` tells why: ``not_found`` (the model
+    found nothing), ``low_relevance`` (the gate stopped weak retrieval before the model),
+    ``no_context``, ``unverified`` (the answer had no valid citation), ``blocked`` or ``refused``
+    (guardrails).
+    """
+
+    request_id: str | None
+    answer: str
+    found: bool
+    reason: str
+    citations: list[CitationItem]
+    warnings: list[str]
+    mode_used: str
+    model: str
+    prompt_version: str
+    usage: UsageItem

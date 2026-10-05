@@ -6,7 +6,7 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 
-from app.api import health, search
+from app.api import answer, health, search
 from app.api.contract import build_contract
 from app.api.errors import register_error_handlers
 from app.api.middleware import RequestContextMiddleware
@@ -15,7 +15,7 @@ from app.core.logging import configure_logging
 from app.core.settings import Settings, get_settings
 from app.services import Services, build_services
 
-API_VERSION = "0.2.0"
+API_VERSION = "0.3.0"
 
 _log = structlog.get_logger(__name__)
 
@@ -24,6 +24,7 @@ def include_routes(app: FastAPI) -> None:
     """All routers. The OpenAPI contract is built from these."""
     app.include_router(health.router)
     app.include_router(search.router)
+    app.include_router(answer.router)
 
 
 def create_app(settings: Settings | None = None, services: Services | None = None) -> FastAPI:

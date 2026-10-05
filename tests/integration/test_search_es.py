@@ -355,3 +355,35 @@ async def test_the_smoke_set_meets_its_quality_gate(
         query="Orion arbitration settlement ceiling", identity=lawyer, mode="bm25"
     )
     assert found.hits[0].doc_id == "DOC-008"
+
+
+# --- RAG on real Elasticsearch ---------------------------------------------------------------
+
+
+async def test_the_model_only_sees_and_cites_what_each_user_may_read(env: Env) -> None:
+    from app.rag.prompts import load_prompt
+    from app.rag.service import AnswerService
+    from tests.fakes import FakeLLMClient
+
+    await _index(env, _corpus_docs())
+    settings = env.settings.model_copy(
+        update={"feature_flags": env.settings.feature_flags.model_copy(update={"rag": True})}
+    )
+    for user, identity in USERS.items():
+        llm = FakeLLMClient(["See [1][2][3][4][5][6]."])
+        search = env.service()
+        service = AnswerService(
+            search=search,
+            llm=llm,
+            prompt=load_prompt(ROOT / "prompts", "answer", "v1"),
+            settings=settings,
+            counter=WhitespaceTokenCounter(),
+        )
+        result = await service.answer(question="quarterly report appendix", identity=identity)
+        sent = " ".join(m.content for call in llm.calls for m in call).lower()
+        for name, (_, secret) in CORPUS.items():
+            if name not in VISIBLE[user]:
+                assert secret not in sent, (user, secret)
+        assert {c.doc_id for c in result.citations} <= VISIBLE[user], user
+        if not VISIBLE[user]:
+            assert llm.calls == [] and result.reason == "no_context"
