@@ -14,3 +14,5 @@ reranker:
 llm:
   model: fake-llm
   endpoint: http://model-server.test
+chunking:
+  tokenizer: whitespace

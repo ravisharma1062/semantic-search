@@ -49,7 +49,7 @@ def _clean_chars(text: str) -> str:
     return _CONTROL.sub("", text)
 
 
-def _is_table_line(line: str) -> bool:
+def is_table_line(line: str) -> bool:
     return bool(_TABLE_LINE.search(line))
 
 
@@ -83,7 +83,7 @@ def _reflow(text: str, cfg: NormalizerSettings) -> str:
     blank_run = 0
     for raw in text.split("\n"):
         # Table rows keep their column spacing, so they can still be recognised later.
-        table_row = _is_table_line(raw)
+        table_row = is_table_line(raw)
         line = raw.strip() if table_row else _SPACES.sub(" ", raw).strip()
         if not line:
             blank_run += 1
@@ -97,7 +97,7 @@ def _reflow(text: str, cfg: NormalizerSettings) -> str:
         previous = output[-1]
         keep_break = (
             table_row
-            or _is_table_line(previous)
+            or is_table_line(previous)
             or _starts_structure(line)
             or _paragraph_end(previous, cfg)
         )
