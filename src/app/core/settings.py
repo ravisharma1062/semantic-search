@@ -12,7 +12,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -58,11 +58,47 @@ class ElasticsearchSettings(BaseModel):
     """Elasticsearch connection, state index and per-interface timeouts."""
 
     hosts: list[str] = Field(min_length=1)
+    api_key: SecretStr | None = None
+    ca_certs: str | None = None
+    verify_certs: bool = True
     state_index: str
     source_read_timeout_s: float = Field(5.0, gt=0)
     bulk_timeout_s: float = Field(30.0, gt=0)
     state_timeout_s: float = Field(2.0, gt=0)
     search_timeout_s: float = Field(1.5, gt=0)
+
+
+class SourceSettings(BaseModel):
+    """How to read the existing document index. Field names must be confirmed with the Java team.
+
+    ``ITEM_ID`` is assumed to be the Elasticsearch ``_id``. Pages are an array of objects. When
+    a document has no pages, the document-level text field is used.
+    """
+
+    max_get_many: int = Field(100, ge=1)
+    max_pages: int = Field(5000, ge=1)
+    max_chars: int = Field(40_000_000, ge=1)
+    pages_field: str = "pages"
+    page_no_field: str = "page_no"
+    page_text_field: str = "text"
+    text_field: str = "ocr_text"
+    doc_type_field: str = "doc_type"
+    tags_field: str = "tags"
+    created_at_field: str = "created_at"
+    owner_field: str = "owner"
+    acl_users_field: str = "acl_users"
+    acl_groups_field: str = "acl_groups"
+    version_field: str = "version"
+    language_field: str = "language"
+
+
+class NormalizerSettings(BaseModel):
+    """OCR text clean-up."""
+
+    edge_lines: int = Field(3, ge=1)
+    repeat_ratio: float = Field(0.4, gt=0, le=1)
+    repeat_min_pages: int = Field(4, ge=2)
+    short_line_chars: int = Field(50, ge=1)
 
 
 class KafkaSettings(BaseModel):
@@ -163,6 +199,8 @@ class Settings(BaseSettings):
     service: ServiceSettings = ServiceSettings()
     search: SearchSettings
     elasticsearch: ElasticsearchSettings
+    source: SourceSettings = SourceSettings()
+    normalizer: NormalizerSettings = NormalizerSettings()
     kafka: KafkaSettings
     consumer: ConsumerSettings = ConsumerSettings()
     retry: RetryPolicy = RetryPolicy()
