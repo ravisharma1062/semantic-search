@@ -1,0 +1,47 @@
+# One image, three run modes. HPA, KEDA, PodDisruptionBudget, anti-affinity and
+# NetworkPolicy come with task T5.5 (production deployment).
+
+image:
+  # Placeholder: use the internal registry.
+  repository: semantic-search
+  tag: ""  # defaults to the chart appVersion
+  pullPolicy: IfNotPresent
+
+# Environment variables for every mode, written to a ConfigMap. Nested settings use "__",
+# see src/app/core/settings.py. In prod the endpoints, the source index and the approved
+# model names must be set here: the service refuses to start without them.
+config:
+  APP_ENV: prod
+  # APP_ELASTICSEARCH__HOSTS: '["https://<elasticsearch>"]'
+  # APP_KAFKA__BOOTSTRAP_SERVERS: <kafka-brokers>
+  # APP_REDIS__URL: <redis-url>
+  # APP_SEARCH__SOURCE_INDEX: <existing-document-index>
+  # APP_EMBEDDING__ENDPOINT: <embedding-server-url>
+  # APP_RERANKER__ENDPOINT: <reranker-server-url>
+  # APP_LLM__ENDPOINT: <llm-server-url>
+  # APP_LLM__MODEL: <approved-model-name>
+
+api:
+  enabled: true
+  replicaCount: 3
+  port: 8080
+  resources:
+    requests: {cpu: "1", memory: 2Gi}
+    limits: {cpu: "2", memory: 4Gi}
+
+# The worker is an idle stub until task T1.2, so it has no probes yet.
+worker:
+  enabled: true
+  replicaCount: 2
+  resources:
+    requests: {cpu: "2", memory: 4Gi}
+    limits: {cpu: "2", memory: 4Gi}
+
+# The batch job runs on demand: helm template/upgrade with --set batch.enabled=true.
+batch:
+  enabled: false
+  parallelism: 1
+  backoffLimit: 2
+  resources:
+    requests: {cpu: "2", memory: 4Gi}
+    limits: {cpu: "2", memory: 4Gi}

@@ -1,0 +1,24 @@
+{{- if .Values.worker.enabled }}
+{{- $ctx := dict "root" . "mode" "worker" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ss.fullname" . }}-worker
+  labels:
+    {{- include "ss.labels" $ctx | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "ss.selectorLabels" $ctx | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ss.labels" $ctx | nindent 8 }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      # Time for the worker to finish the current message before it is killed.
+      terminationGracePeriodSeconds: 60
+      {{- include "ss.podSpec" (dict "root" . "mode" "worker" "cfg" .Values.worker) | nindent 6 }}
+{{- end }}

@@ -44,10 +44,12 @@ T3 and T4 can run in parallel after T2 if there are enough engineers.
   - Dockerfile builds a non-root image. A basic Helm chart exists with `api`, `worker` and `batch` modes.
   - `docker compose` starts Elasticsearch, Kafka, Redis and a fake model server locally.
   - A fakes package exists in `tests/fakes` with fake `Embedder`, `Reranker`, `LLMClient`, `SourceReader`.
+- **Scope decisions** (see `docs/decisions/0001-skeleton.md`): CI is GitHub Actions. The Helm chart has no HPA, KEDA, PodDisruptionBudget, anti-affinity or NetworkPolicy (moved to T5.5). There are no integration tests yet. The retry helper in `core` is deferred to T1.2.
 
 ### T1.2 Kafka consumer framework (8-10 days)
 - **Goal:** A reusable consumer with safe commit, retry, retry topic and DLQ.
 - **Depends on:** T1.1.
+- **Also here (moved from T1.1):** add the shared retry helper in `core` (needs `tenacity`, rule 8). Remove the "no tests collected" tolerance from the integration step in `.github/workflows/ci.yml`. Replace the idle worker stub in `app/modes.py` and add a worker probe to the Helm chart.
 - **Done when:**
   - Event schema v1 (`UPSERT`, `DELETE`, `ACL_CHANGE`) is validated with Pydantic. Bad messages go to the DLQ with the error.
   - Offsets are committed only after the handler succeeds.
@@ -252,7 +254,7 @@ T3 and T4 can run in parallel after T2 if there are enough engineers.
 - **Done when:** All runbooks listed in section 18 are written and tried. Failure tests (pod, model server, Elasticsearch, Kafka) and a snapshot restore test pass.
 
 ### T5.5 Production deployment and canary release (4-5 days)
-- **Done when:** The service is deployed through the pipeline with a canary step. Rollback is tested.
+- **Done when:** The service is deployed through the pipeline with a canary step. Rollback is tested. The Helm chart has HPA, KEDA (worker, on consumer lag), PodDisruptionBudget, anti-affinity and NetworkPolicy (moved from T1.1).
 
 ---
 

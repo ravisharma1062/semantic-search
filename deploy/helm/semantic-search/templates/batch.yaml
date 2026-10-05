@@ -1,0 +1,20 @@
+{{- if .Values.batch.enabled }}
+{{- $ctx := dict "root" . "mode" "batch" }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "ss.fullname" . }}-batch
+  labels:
+    {{- include "ss.labels" $ctx | nindent 4 }}
+spec:
+  parallelism: {{ .Values.batch.parallelism }}
+  backoffLimit: {{ .Values.batch.backoffLimit }}
+  template:
+    metadata:
+      labels:
+        {{- include "ss.labels" $ctx | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 60
+      {{- include "ss.podSpec" (dict "root" . "mode" "batch" "cfg" .Values.batch) | nindent 6 }}
+{{- end }}

@@ -1,0 +1,18 @@
+# Local development against `docker compose -f deploy/local/docker-compose.yml up -d`.
+service:
+  log_json: false
+search:
+  source_index: documents_sample
+elasticsearch:
+  hosts: ["http://localhost:9200"]
+kafka:
+  bootstrap_servers: localhost:9092
+redis:
+  url: redis://localhost:6379/0
+embedding:
+  endpoint: http://localhost:8081
+reranker:
+  endpoint: http://localhost:8081
+llm:
+  model: fake-llm
+  endpoint: http://localhost:8081

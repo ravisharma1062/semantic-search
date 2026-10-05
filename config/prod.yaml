@@ -1,0 +1,6 @@
+# Production. Endpoints, the source index and approved model names are NOT set here:
+# the Helm chart passes them as APP_* environment variables. The service refuses to start
+# if one is missing.
+service:
+  log_json: true
+  host: 0.0.0.0
