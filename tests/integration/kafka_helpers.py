@@ -4,7 +4,8 @@ import time
 import uuid
 from typing import cast
 
-from confluent_kafka import Consumer
+from confluent_kafka import Consumer, KafkaException
+from confluent_kafka import TopicPartition as KafkaTopicPartition
 
 
 def read_all(
@@ -31,3 +32,17 @@ def read_all(
         found.append((message.value() or b"", headers))
     consumer.close()
     return found
+
+
+def committed_total(bootstrap: str, group: str, topic: str, partitions: int = 4) -> int:
+    """Sum of the committed offsets of a group on a topic."""
+    consumer = Consumer({"bootstrap.servers": bootstrap, "group.id": group})
+    try:
+        offsets = consumer.committed(
+            [KafkaTopicPartition(topic, p) for p in range(partitions)], timeout=10
+        )
+    except KafkaException:
+        return 0
+    finally:
+        consumer.close()
+    return sum(max(0, o.offset) for o in offsets)

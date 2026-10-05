@@ -90,10 +90,20 @@ class Work:
 def coalesce(group: Sequence[Tracked]) -> Work:
     """Merge events of one ``item_id`` into one unit of work.
 
-    Order is by event time, then arrival. A last DELETE wins. Otherwise events after the last
-    DELETE count: an UPSERT includes a permission refresh, so it wins over ACL_CHANGE.
+    Order is by ``doc_version`` when all events have one (a late DELETE of an old version must not
+    beat a newer UPSERT), otherwise by event time, then arrival. A last DELETE wins. Otherwise
+    the events after the last DELETE count: an UPSERT includes a permission refresh, so it wins
+    over ACL_CHANGE.
     """
-    ordered = sorted(group, key=lambda t: (t.event.occurred_at, t.arrival))
+    versioned = all(t.event.doc_version is not None for t in group)
+    ordered = sorted(
+        group,
+        key=lambda t: (
+            t.event.doc_version if versioned and t.event.doc_version is not None else 0,
+            t.event.occurred_at,
+            t.arrival,
+        ),
+    )
     last_delete = max(
         (i for i, t in enumerate(ordered) if t.event.event_type is EventType.DELETE), default=-1
     )

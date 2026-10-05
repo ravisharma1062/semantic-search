@@ -370,6 +370,17 @@ def test_coalesce_only_permission_changes_stay_a_permission_change() -> None:
     assert work.event.event_type is EventType.ACL_CHANGE
 
 
+def test_coalesce_a_late_delete_of_an_old_version_does_not_beat_a_newer_upsert() -> None:
+    work = coalesce([_tracked("UPSERT", 1, 0, 4), _tracked("DELETE", 2, 0, 3)])
+    assert work.event.event_type is EventType.UPSERT
+    assert work.event.doc_version == 4
+
+
+def test_coalesce_a_newer_delete_beats_an_older_upsert_in_any_arrival_order() -> None:
+    work = coalesce([_tracked("DELETE", 1, 0, 5), _tracked("UPSERT", 2, 0, 4)])
+    assert work.event.event_type is EventType.DELETE
+
+
 def test_coalesce_orders_by_event_time_not_by_arrival() -> None:
     # a delayed retry copy of an old UPSERT arrives after the newer DELETE
     work = coalesce([_tracked("DELETE", 1, 10), _tracked("UPSERT", 2, 0)])

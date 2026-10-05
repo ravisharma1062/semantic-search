@@ -31,10 +31,13 @@ jobs:
       - name: Mypy
         run: uv run mypy src tests
       - name: Unit tests
-        run: uv run pytest -q
+        run: uv run pytest -q --cov --cov-report=
       - name: Integration tests
         # Docker is available on ubuntu-latest, so Testcontainers work.
-        run: uv run pytest -q -m integration
+        run: uv run pytest -q -m integration --cov --cov-append --cov-report=
+      - name: Coverage of ingestion and store
+        # Unit and integration tests together. The threshold (fail_under) is in pyproject.toml.
+        run: uv run coverage report
 
   helm:
     name: Helm chart

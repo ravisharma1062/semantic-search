@@ -64,6 +64,15 @@ HPA, KEDA, PodDisruptionBudget, anti-affinity and NetworkPolicy come with task T
 
 - `uv run pytest -q`: unit tests. No network and no Docker. Fakes are in `tests/fakes`.
 - `uv run pytest -q -m integration`: integration tests (Testcontainers: real Kafka, Elasticsearch and Redis in Docker, a few minutes).
+- Coverage of `ingestion` and `store` (unit and integration together, threshold in `pyproject.toml`):
+
+  ```bash
+  uv run pytest -q --cov --cov-report=
+  uv run pytest -q -m integration --cov --cov-append --cov-report=
+  uv run coverage report
+  ```
+
+- What is tested and which faults are covered: `docs/decisions/0008-pipeline-tests.md`.
 
 ## Index versions
 
