@@ -1,0 +1,16 @@
+# Used by unit tests. No real hosts: nothing here may be reachable.
+search:
+  source_index: documents_test
+elasticsearch:
+  hosts: ["http://elasticsearch.test:9200"]
+kafka:
+  bootstrap_servers: kafka.test:9092
+redis:
+  url: redis://redis.test:6379/0
+embedding:
+  endpoint: http://model-server.test
+reranker:
+  endpoint: http://model-server.test
+llm:
+  model: fake-llm
+  endpoint: http://model-server.test

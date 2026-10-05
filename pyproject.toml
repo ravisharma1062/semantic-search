@@ -1,0 +1,56 @@
+[project]
+name = "semantic-search"
+version = "0.1.0"
+description = "Semantic search, reranking and RAG service for the document search platform"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "pydantic",
+    "pydantic-settings[yaml]",
+    "structlog",
+]
+
+[dependency-groups]
+dev = [
+    "httpx",
+    "mypy",
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+]
+
+[tool.uv]
+# The service runs from src/ (PYTHONPATH), it is not installed as a package.
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-m 'not integration'"
+markers = [
+    "integration: needs Docker (real Elasticsearch and Kafka through Testcontainers)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.format]
+# Docs are not formatted by ruff (it would rewrite code blocks in docs/HLD.md).
+exclude = ["*.md"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "ASYNC", "SIM", "S", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+mypy_path = ["src", "."]
+explicit_package_bases = true
+files = ["src", "tests"]

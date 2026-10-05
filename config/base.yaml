@@ -1,0 +1,30 @@
+# Values shared by all environments. Endpoints and approved model names are set per
+# environment (config/<APP_ENV>.yaml) or by APP_* environment variables.
+search:
+  index_alias: doc_chunks_current
+elasticsearch:
+  state_index: doc_index_state
+kafka:
+  live_topic: doc-index-events
+  backfill_topic: doc-index-backfill
+  retry_topic: doc-index-retry
+  dlq_topic: doc-index-dlq
+  consumer_group: semantic-indexer
+embedding:
+  provider: inhouse
+  model: bge-m3
+  dims: 1024
+reranker:
+  provider: inhouse
+  model: bge-reranker
+  enabled: true
+llm:
+  provider: inhouse
+chunking:
+  version: v1
+  target_tokens: 400
+  max_tokens: 512
+  overlap_tokens: 60
+feature_flags:
+  semantic_search: true
+  rag: false

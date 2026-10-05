@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "ss.fullname" . }}
+  labels:
+    {{- include "ss.labels" (dict "root" . "mode" "config") | nindent 4 }}
+data:
+  {{- range $name, $value := .Values.config }}
+  {{ $name }}: {{ $value | quote }}
+  {{- end }}
+  # Listen on all interfaces inside the pod.
+  APP_SERVICE__HOST: "0.0.0.0"
+  APP_SERVICE__PORT: {{ .Values.api.port | quote }}
