@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from app.core.errors import AppError, ErrorCode, InvalidRequestError
+from app.core.errors import AppError, ErrorCode, InvalidRequestError, RateLimitedError
 
 _log = structlog.get_logger(__name__)
 
@@ -19,17 +19,26 @@ def current_request_id() -> str | None:
 
 
 def error_response(
-    status_code: int, code: ErrorCode, message: str, request_id: str | None
+    status_code: int,
+    code: ErrorCode,
+    message: str,
+    request_id: str | None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     """Build the common error body."""
     body = {"error": {"code": code.value, "message": message, "request_id": request_id}}
-    return JSONResponse(status_code=status_code, content=body)
+    return JSONResponse(status_code=status_code, content=body, headers=headers)
 
 
 async def _handle_app_error(_request: Request, exc: Exception) -> JSONResponse:
     error = cast(AppError, exc)  # registered for AppError only
     _log.warning("app_error", code=error.code.value, status=error.http_status)
-    return error_response(error.http_status, error.code, error.message, current_request_id())
+    headers = None
+    if isinstance(error, RateLimitedError):
+        headers = {"Retry-After": str(error.retry_after_s)}
+    return error_response(
+        error.http_status, error.code, error.message, current_request_id(), headers
+    )
 
 
 async def _handle_validation_error(_request: Request, exc: Exception) -> JSONResponse:

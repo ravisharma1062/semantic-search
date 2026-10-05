@@ -88,3 +88,16 @@ uv run python -m app.jobs.index_admin switch-alias --index doc_chunks_v1_bgem3 -
 Index names carry the version and the model. `show-alias` says where the alias points.
 To roll out a new model or chunker: create a new version, set `APP_STORE__WRITE_INDEX` for the
 re-index, check counts and the evaluation set, then `switch-alias`. Keep the old version for 14 days.
+
+## Answers (RAG) locally
+
+RAG is off by default (`feature_flags.rag`). To try it, set `APP_FEATURE_FLAGS__RAG=true` and start the
+API. The fake model server answers `NOT_FOUND` when there is no context and otherwise a fixed text
+that cites source `[1]`, with streaming. It shows the plumbing, not answer quality.
+
+```bash
+curl -s localhost:8080/v1/answer -H "Authorization: Bearer <token>" -H "X-User-Id: dev" -H "Content-Type: application/json" -d '{"question": "penalty for late delivery"}'
+```
+
+Prompts are in `prompts/` (`answer.v1.txt` and the judge prompts). A new prompt is a new file with a
+new version (`rag.prompt_version`), compared with `eval.rag_eval.compare_prompts`.

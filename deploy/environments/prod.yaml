@@ -1,0 +1,37 @@
+# Values of the Production environment, on top of values.yaml and values-prod.yaml.
+# The platform team fills the <...> parts. Nothing secret belongs here: tokens and keys come from
+# the secret store (secretName). The service refuses to start while an endpoint is missing.
+secretName: <secret-with-api-tokens>
+
+config:
+  APP_ENV: prod
+  APP_ELASTICSEARCH__HOSTS: '["https://<elasticsearch-prod>"]'
+  APP_KAFKA__BOOTSTRAP_SERVERS: <kafka-brokers-prod>
+  APP_REDIS__URL: <redis-url-prod>
+  APP_SEARCH__SOURCE_INDEX: <existing-document-index>
+  APP_EMBEDDING__ENDPOINT: <embedding-server-url>
+  APP_RERANKER__ENDPOINT: <reranker-server-url>
+  APP_LLM__ENDPOINT: <llm-server-url>
+  APP_LLM__MODEL: <approved-model-name>
+  APP_CHUNKING__TOKENIZER_FILE: /models/bge-m3/tokenizer.json
+  APP_FEATURE_FLAGS__RAG: "false"  # released separately, after search is stable
+
+api:
+  replicaCount: 3
+  autoscaling: {minReplicas: 3, maxReplicas: 12}
+
+worker:
+  keda:
+    minReplicas: 2
+    maxReplicas: 8
+    bootstrapServers: <kafka-brokers-prod>
+    triggers:
+      - {consumerGroup: semantic-indexer, topic: doc-index-events, lagThreshold: 100}
+      - {consumerGroup: semantic-indexer-backfill, topic: doc-index-backfill, lagThreshold: 500}
+
+networkPolicy:
+  apiIngressFrom:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: <java-app-namespace>}}
+  metricsFrom:
+    - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: <monitoring-namespace>}}
+  egress: []  # Kafka, Elasticsearch, Redis, model servers, observability: from the platform team

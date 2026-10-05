@@ -15,6 +15,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.errors import error_response
 from app.core.errors import AppError, ErrorCode
+from app.observability.metrics import get_metrics
 
 REQUEST_ID_HEADER = "X-Request-Id"
 _VALID_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
@@ -63,11 +64,17 @@ class RequestContextMiddleware:
             )
             await response(scope, receive, send_with_request_id)
         finally:
+            elapsed = time.perf_counter() - started
+            # The route template, never the raw path: it keeps the number of series small.
+            route = getattr(scope.get("route"), "path", None) or "unmatched"
+            metrics = get_metrics()
+            metrics.http_requests.labels(route, scope["method"], str(status_code)).inc()
+            metrics.http_duration.labels(route).observe(elapsed)
             _log.info(
                 "http_request",
                 method=scope["method"],
                 path=scope["path"],
                 status=status_code,
-                duration_ms=round((time.perf_counter() - started) * 1000, 1),
+                duration_ms=round(elapsed * 1000, 1),
             )
             structlog.contextvars.clear_contextvars()

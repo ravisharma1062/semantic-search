@@ -134,6 +134,27 @@ class FakeJobStore:
         """The record, or ``None``."""
         return self.records.get(job_id)
 
+    async def request_job(
+        self, job_id: str, kind: str, wave: int | None, *, restart: bool = False
+    ) -> JobRecord:
+        """Queue a job. One that is queued or running stays as it is."""
+        existing = self.records.get(job_id)
+        if existing is not None and existing.status in (JobStatus.REQUESTED, JobStatus.RUNNING):
+            return existing
+        update: dict[str, Any] = {"status": JobStatus.REQUESTED, "desired": "RUNNING"}
+        if restart:
+            update |= {"cursor": None, "scanned": 0, "published": 0, "skipped_up_to_date": 0}
+        record = existing or JobRecord(
+            job_id=job_id, kind=kind, wave=wave, started_at=NOW, updated_at=NOW
+        )
+        self.records[job_id] = record.model_copy(update=update)
+        return self.records[job_id]
+
+    async def list_requested(self) -> list[JobRecord]:
+        """Queued jobs, oldest first."""
+        queued = [r for r in self.records.values() if r.status is JobStatus.REQUESTED]
+        return sorted(queued, key=lambda r: r.started_at)
+
     async def list_jobs(self, limit: int = 100) -> list[JobRecord]:
         """All records."""
         return list(self.records.values())[:limit]

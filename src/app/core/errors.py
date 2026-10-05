@@ -11,6 +11,7 @@ class ErrorCode(StrEnum):
 
     INVALID_REQUEST = "INVALID_REQUEST"
     UNAUTHORIZED = "UNAUTHORIZED"
+    NOT_FOUND = "NOT_FOUND"
     RATE_LIMITED = "RATE_LIMITED"
     UPSTREAM_UNAVAILABLE = "UPSTREAM_UNAVAILABLE"
     TIMEOUT = "TIMEOUT"
@@ -65,12 +66,24 @@ class ForbiddenError(AppError):
     default_message = "Forbidden"
 
 
+class NotFoundError(AppError):
+    """An admin resource (a job) does not exist."""
+
+    code = ErrorCode.NOT_FOUND
+    http_status = 404
+    default_message = "Not found"
+
+
 class RateLimitedError(AppError):
     """Too many requests for the user or service."""
 
     code = ErrorCode.RATE_LIMITED
     http_status = 429
     default_message = "Too many requests"
+
+    def __init__(self, message: str | None = None, retry_after_s: int = 1) -> None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
 
 
 class UpstreamUnavailableError(AppError):

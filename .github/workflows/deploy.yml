@@ -1,0 +1,193 @@
+name: Deploy
+
+# Release pipeline of HLD section 18: build, test, scan, deploy to Test, run the evaluation smoke
+# set, manual approval, canary in Production, full rollout. Rollback is a redeploy of the previous
+# image (workflow_dispatch with action "rollback").
+#
+# What it needs from the repository settings (none of this exists yet, the platform team sets it up):
+#   - GitHub environments "test" and "production". "production" must have required reviewers: that
+#     is the manual approval.
+#   - Variables: IMAGE_REPOSITORY (the internal registry path of the image).
+#   - Secrets per environment: KUBE_CONFIG (base64 kubeconfig), REGISTRY_USER, REGISTRY_TOKEN,
+#     API_TOKEN (a service token for the smoke runs), PROMETHEUS_URL (production), and the
+#     environment values files deploy/environments/<env>.yaml in the repository.
+#
+# It has not been run against a real cluster. Treat the first run in Test as the verification.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: deploy a version through the pipeline, or roll Production back
+        type: choice
+        options: [deploy, rollback]
+        default: deploy
+      version:
+        description: image tag to deploy (a version tag, for example v1.4.0). Not used for rollback
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UV_VERSION: "0.8.22"
+  RELEASE: semantic-search
+  NAMESPACE: semantic-search
+  CHART: deploy/helm/semantic-search
+
+jobs:
+  build:
+    name: Build, scan and push the image
+    if: github.event_name == 'push' || inputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: echo "version=${{ inputs.version || github.ref_name }}" >> "$GITHUB_OUTPUT"
+      - name: Build
+        run: docker build -f deploy/Dockerfile -t "${{ vars.IMAGE_REPOSITORY }}:${{ steps.v.outputs.version }}" .
+      - name: Scan (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ vars.IMAGE_REPOSITORY }}:${{ steps.v.outputs.version }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore
+      - name: Push
+        # Images are immutable: the tag is the version, never "latest".
+        run: |
+          echo "${{ secrets.REGISTRY_TOKEN }}" | docker login "${{ vars.IMAGE_REPOSITORY }}" -u "${{ secrets.REGISTRY_USER }}" --password-stdin
+          docker push "${{ vars.IMAGE_REPOSITORY }}:${{ steps.v.outputs.version }}"
+
+  test-env:
+    name: Deploy to Test and run the evaluation smoke set
+    needs: build
+    runs-on: ubuntu-latest
+    environment: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Install uv
+        run: python -m pip install "uv==${UV_VERSION}"
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+      - name: Deploy
+        # --atomic rolls the release back if the pods do not become ready.
+        run: |
+          helm upgrade --install "$RELEASE" "$CHART" --namespace "$NAMESPACE" \
+            -f "$CHART/values-prod.yaml" -f deploy/environments/test.yaml \
+            --set image.repository="${{ vars.IMAGE_REPOSITORY }}" \
+            --set image.tag="${{ needs.build.outputs.version }}" \
+            --atomic --timeout 10m
+      - name: Retrieval smoke set (quality gate)
+        run: |
+          uv run python -m eval.runner --set eval/smoke_set.jsonl --api "${{ vars.TEST_API_URL }}" \
+            --token "${{ secrets.API_TOKEN }}" --name "deploy-${{ needs.build.outputs.version }}" \
+            --min-recall10 0.8 --min-mrr 0.5
+      - name: Answer smoke set (quality gate)
+        run: |
+          uv run python -m eval.rag_eval --set eval/smoke_set.jsonl --api "${{ vars.TEST_API_URL }}" \
+            --token "${{ secrets.API_TOKEN }}" --name "deploy-${{ needs.build.outputs.version }}" \
+            --min-citation-accuracy 0.7 --min-not-found-accuracy 0.5
+      - name: Short load check
+        run: |
+          uv run python -m loadtest.run --api "${{ vars.TEST_API_URL }}" --token "${{ secrets.API_TOKEN }}" \
+            --questions eval/smoke_set.jsonl --endpoint search --rate 5 --duration 60 \
+            --label deploy-smoke --p95-max 3.0 --error-rate-max 0.01
+
+  canary:
+    name: Canary in Production
+    needs: [build, test-env]
+    runs-on: ubuntu-latest
+    # The manual approval: this environment has required reviewers.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Install uv
+        run: python -m pip install "uv==${UV_VERSION}"
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+      - name: Start the canary
+        # The stable pods keep the old image. The canary pods share the Service.
+        run: |
+          helm upgrade "$RELEASE" "$CHART" --namespace "$NAMESPACE" --reuse-values \
+            --set canary.enabled=true --set canary.tag="${{ needs.build.outputs.version }}" \
+            --set image.repository="${{ vars.IMAGE_REPOSITORY }}" \
+            --atomic --timeout 10m
+      - name: Watch the canary
+        run: |
+          uv run python -m loadtest.canary_check --prometheus "${{ secrets.PROMETHEUS_URL }}" \
+            --canary-pod ".*-api-canary-.*" --stable-pod ".*-api-[0-9a-f]+-[a-z0-9]+" \
+            --window 5m --duration 900 --interval 60
+      - name: Stop the canary if it was not good enough
+        if: failure()
+        run: |
+          helm upgrade "$RELEASE" "$CHART" --namespace "$NAMESPACE" --reuse-values \
+            --set canary.enabled=false --atomic --timeout 5m
+
+  promote:
+    name: Full rollout in Production
+    needs: [build, canary]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+      - name: Roll out and remove the canary
+        run: |
+          helm upgrade --install "$RELEASE" "$CHART" --namespace "$NAMESPACE" \
+            -f "$CHART/values-prod.yaml" -f deploy/environments/prod.yaml \
+            --set image.repository="${{ vars.IMAGE_REPOSITORY }}" \
+            --set image.tag="${{ needs.build.outputs.version }}" \
+            --set canary.enabled=false \
+            --atomic --timeout 15m
+      - name: Show the release
+        run: helm history "$RELEASE" --namespace "$NAMESPACE" --max 5
+
+  rollback:
+    name: Roll Production back to the previous release
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'rollback'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+      - name: Roll back
+        # Redeploys the previous revision (the previous image). Feature flags (runbook 1) are the
+        # faster switch if only the new behaviour is the problem.
+        run: |
+          helm history "$RELEASE" --namespace "$NAMESPACE" --max 5
+          helm rollback "$RELEASE" --namespace "$NAMESPACE" --wait --timeout 10m
+          helm history "$RELEASE" --namespace "$NAMESPACE" --max 3

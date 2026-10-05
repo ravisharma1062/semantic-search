@@ -1,11 +1,15 @@
-# One image, three run modes. HPA, KEDA, PodDisruptionBudget, anti-affinity and
-# NetworkPolicy come with task T5.5 (production deployment).
+# One image, three run modes (api, worker, batch). Scaling, disruption budgets, spreading over
+# zones and NetworkPolicies are below (task T5.5). Production settings are in values-prod.yaml.
 
 image:
   # Placeholder: use the internal registry.
   repository: semantic-search
   tag: ""  # defaults to the chart appVersion
   pullPolicy: IfNotPresent
+
+# A Secret (from the secret store) with APP_API__SERVICE_TOKENS (JSON: service name to token),
+# APP_API__ADMIN_TOKENS, APP_API__IDENTITY_SERVICES (JSON list) and other keys. Never in values.
+secretName: ""
 
 # Environment variables for every mode, written to a ConfigMap. Nested settings use "__",
 # see src/app/core/settings.py. In prod the endpoints, the source index and the approved
@@ -20,12 +24,20 @@ config:
   # APP_RERANKER__ENDPOINT: <reranker-server-url>
   # APP_LLM__ENDPOINT: <llm-server-url>
   # APP_LLM__MODEL: <approved-model-name>
+  # APP_FEATURE_FLAGS__RAG: "true"  # answers are released after search is stable
+  # APP_RAG__MIN_SCORE: "0.0"  # the gate, from the evaluation set
   # APP_CHUNKING__TOKENIZER_FILE: /models/bge-m3/tokenizer.json  # the model's tokenizer, mounted
 
 api:
   enabled: true
   replicaCount: 3
   port: 8080
+  # With autoscaling the replica count is owned by the HPA.
+  autoscaling:
+    enabled: false
+    minReplicas: 3
+    maxReplicas: 12
+    targetCpuUtilization: 65
   resources:
     requests: {cpu: "1", memory: 2Gi}
     limits: {cpu: "2", memory: 4Gi}
@@ -34,6 +46,18 @@ api:
 worker:
   enabled: true
   replicaCount: 2
+  metricsPort: 9100  # Prometheus scrapes it. Must match APP_OBSERVABILITY__WORKER_METRICS_PORT.
+  # Scale on Kafka lag with KEDA (installed in the cluster). One trigger per consumer group.
+  keda:
+    enabled: false
+    minReplicas: 2
+    maxReplicas: 8  # at most the number of partitions
+    pollingIntervalSeconds: 30
+    cooldownSeconds: 300
+    bootstrapServers: ""
+    triggers: []
+    #  - {consumerGroup: semantic-indexer, topic: doc-index-events, lagThreshold: 100}
+    #  - {consumerGroup: semantic-indexer-backfill, topic: doc-index-backfill, lagThreshold: 500}
   heartbeatFile: /tmp/worker-alive  # must match APP_INGESTION__HEARTBEAT_FILE
   heartbeatMaxAgeSeconds: 60
   resources:
@@ -54,3 +78,38 @@ batch:
   resources:
     requests: {cpu: "2", memory: 4Gi}
     limits: {cpu: "2", memory: 4Gi}
+
+# Spread pods over nodes (soft anti-affinity) and zones (topology spread).
+scheduling:
+  enabled: true
+
+# Voluntary disruptions (drains, upgrades) keep this many pods.
+pdb:
+  enabled: false
+  api:
+    minAvailable: 2
+  worker:
+    maxUnavailable: 1
+
+# HLD section 16: deny by default, allow the flows of section 15. Needs a CNI that enforces
+# NetworkPolicy. When enabled, fill the three lists below for the environment.
+networkPolicy:
+  enabled: false
+  dnsNamespace: kube-system
+  # Who may call the API: the Java app only.
+  apiIngressFrom: []
+  #  - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: <java-app-namespace>}}
+  # Who may scrape metrics.
+  metricsFrom: []
+  #  - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: <monitoring-namespace>}}
+  # Allowed outgoing flows (Kafka, Elasticsearch, Redis, model servers, observability, the egress
+  # proxy). Whole NetworkPolicyEgressRule objects.
+  egress: []
+  #  - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: <kafka-namespace>}}}]
+  #    ports: [{protocol: TCP, port: 9092}]
+
+# A canary of the API: a few pods with a new image next to the stable ones (see api-canary.yaml).
+canary:
+  enabled: false
+  tag: ""  # the image tag to try
+  replicaCount: 1

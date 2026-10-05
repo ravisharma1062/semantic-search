@@ -11,3 +11,4 @@ data:
   # Listen on all interfaces inside the pod.
   APP_SERVICE__HOST: "0.0.0.0"
   APP_SERVICE__PORT: {{ .Values.api.port | quote }}
+  APP_OBSERVABILITY__WORKER_METRICS_PORT: {{ .Values.worker.metricsPort | quote }}

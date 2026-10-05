@@ -29,7 +29,9 @@ jobs:
       - name: Ruff format
         run: uv run ruff format --check .
       - name: Mypy
-        run: uv run mypy src tests
+        run: uv run mypy
+      - name: OpenAPI contract is current
+        run: PYTHONPATH=src uv run python -m app.api.openapi_export --check
       - name: Unit tests
         run: uv run pytest -q --cov --cov-report=
       - name: Integration tests
@@ -38,6 +40,23 @@ jobs:
       - name: Coverage of ingestion and store
         # Unit and integration tests together. The threshold (fail_under) is in pyproject.toml.
         run: uv run coverage report
+
+  access:
+    # Users see only what their rights allow (task T2.6). Make this job required for merging.
+    name: Access isolation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Install uv
+        run: python -m pip install "uv==${UV_VERSION}"
+      - name: Install dependencies
+        run: uv sync --frozen
+      - name: Isolation tests, unit and on real Elasticsearch
+        # "-m access" selects the unit and the integration isolation tests.
+        run: uv run pytest -q -m access
 
   helm:
     name: Helm chart
@@ -48,9 +67,32 @@ jobs:
         run: |
           helm lint deploy/helm/semantic-search
           helm lint deploy/helm/embedding-server
-      - name: Render every mode
+      - name: Render every mode, with the production values and with a canary
         run: |
           helm template ci deploy/helm/semantic-search --set batch.enabled=true > /dev/null
+          helm template ci deploy/helm/semantic-search --set canary.enabled=true --set canary.tag=ci > /dev/null
+          helm template ci deploy/helm/semantic-search -f deploy/helm/semantic-search/values-prod.yaml             --set worker.keda.bootstrapServers=kafka:9092             --set 'worker.keda.triggers[0].consumerGroup=semantic-indexer'             --set 'worker.keda.triggers[0].topic=doc-index-events'             --set 'networkPolicy.apiIngressFrom[0].namespaceSelector.matchLabels.team=java' > /dev/null
+      - name: Alert rules are valid Prometheus rules
+        run: |
+          docker run --rm -v "$PWD/deploy/observability:/rules:ro" --entrypoint promtool             prom/prometheus:v2.55.1 check rules /rules/prometheus-rules.yaml
+
+  dependencies:
+    # Known vulnerabilities in the locked dependencies (task T5.3). pip-audit is a CI tool, not a
+    # dependency of the service.
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Install uv
+        run: python -m pip install "uv==${UV_VERSION}"
+      - name: Export the locked runtime dependencies
+        run: uv export --frozen --no-dev --no-hashes --no-emit-project -o audit-requirements.txt
+      - name: pip-audit
+        # The versions are exact, so nothing has to be resolved or installed.
+        run: uvx pip-audit --requirement audit-requirements.txt --no-deps --disable-pip --strict
 
   docker:
     name: Docker image
@@ -61,8 +103,25 @@ jobs:
         run: docker build -f deploy/Dockerfile -t semantic-search:ci .
       - name: Check the image runs as non-root
         run: test "$(docker run --rm --entrypoint id semantic-search:ci -u)" != "0"
+      - name: Scan the image (Trivy)
+        # HIGH and CRITICAL findings with a fix fail the build. A finding that is accepted needs
+        # an entry in .trivyignore with a reason and an owner (docs/threat-model-check.md).
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: semantic-search:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore
+      - name: Scan the Dockerfile and the Helm charts for misconfigurations (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: config
+          scan-ref: deploy
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          trivyignores: .trivyignore
 
-  # Not in T1.1, each belongs to a later task:
-  #   - dependency and image vulnerability scan: T5.3 (the scanner must be named by security)
-  #   - evaluation smoke set: T2.5
-  #   - push of the image, deploy to Test and Prod with approval and canary: T5.5
+  # Still outside this file:
+  #   - evaluation smoke set against a deployed Test environment: deploy.yml
+  #   - push of the image, deploy to Test and Prod with approval and canary: deploy.yml

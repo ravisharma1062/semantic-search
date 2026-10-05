@@ -1,0 +1,32 @@
+{{- if .Values.pdb.enabled }}
+{{- if .Values.api.enabled }}
+{{- $ctx := dict "root" . "mode" "api" }}
+# Voluntary disruptions (node drains, upgrades) never take the API below this many pods.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "ss.fullname" . }}-api
+  labels:
+    {{- include "ss.labels" $ctx | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.api.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "ss.selectorLabels" $ctx | nindent 6 }}
+{{- end }}
+{{- if .Values.worker.enabled }}
+{{- $ctx := dict "root" . "mode" "worker" }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "ss.fullname" . }}-worker
+  labels:
+    {{- include "ss.labels" $ctx | nindent 4 }}
+spec:
+  maxUnavailable: {{ .Values.pdb.worker.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "ss.selectorLabels" $ctx | nindent 6 }}
+{{- end }}
+{{- end }}

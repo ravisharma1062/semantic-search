@@ -7,10 +7,13 @@ same text always gives the same vector. Texts are never logged.
 """
 
 import hashlib
+import json
 import math
 import os
+from collections.abc import Iterator
 
 from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 DIMS = int(os.environ.get("FAKE_DIMS", "1024"))
@@ -36,6 +39,7 @@ class ChatMessage(BaseModel):
 class ChatRequest(BaseModel):
     model: str = "fake-llm"
     messages: list[ChatMessage]
+    stream: bool = False
 
 
 def _vector(text: str) -> list[float]:
@@ -73,10 +77,34 @@ async def rerank(request: RerankRequest) -> list[dict[str, float | int]]:
     return sorted(scored, key=lambda item: (-item["score"], item["index"]))
 
 
-@app.post("/v1/chat/completions")
-async def chat(request: ChatRequest) -> dict[str, object]:
+_END = chr(10) * 2  # a blank line ends a server-sent event
+
+
+def _sse(data: dict[str, object]) -> str:
+    return "data: " + json.dumps(data) + _END
+
+
+def _fake_answer(messages: list[ChatMessage]) -> str:
+    """NOT_FOUND without context. With context a short answer that cites source [1]."""
+    user = messages[-1].content if messages else ""
+    return "The documents mention this, see the first source [1]." if "[1]" in user else "NOT_FOUND"
+
+
+@app.post("/v1/chat/completions", response_model=None)
+async def chat(request: ChatRequest) -> dict[str, object] | StreamingResponse:
+    answer = _fake_answer(request.messages)
+    if request.stream:
+        words = answer.split(" ")
+
+        def events() -> Iterator[str]:
+            for position, word in enumerate(words):
+                piece = word if position == 0 else f" {word}"
+                yield _sse({"choices": [{"delta": {"content": piece}}]})
+            yield "data: [DONE]" + _END
+
+        return StreamingResponse(events(), media_type="text/event-stream")
     return {
         "model": request.model,
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": "NOT_FOUND"}}],
-        "usage": {"prompt_tokens": 0, "completion_tokens": 1},
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": answer}}],
+        "usage": {"prompt_tokens": 0, "completion_tokens": len(answer.split())},
     }
