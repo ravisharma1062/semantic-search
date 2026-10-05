@@ -40,6 +40,12 @@ containers:
     envFrom:
       - configMapRef:
           name: {{ include "ss.fullname" .root }}
+      {{- if .root.Values.secretName }}
+      # Tokens and keys: APP_API__SERVICE_TOKENS, APP_API__ADMIN_TOKENS and so on, from the secret store.
+      - secretRef:
+          name: {{ .root.Values.secretName }}
+          optional: true
+      {{- end }}
     securityContext:
       allowPrivilegeEscalation: false
       readOnlyRootFilesystem: true

@@ -53,6 +53,12 @@ class SearchSettings(BaseModel):
     rerank_top_n: int = Field(50, ge=1)
     rrf_rank_constant: int = Field(60, ge=1)
     timeout_ms: int = Field(3000, ge=1)
+    # "python": two searches merged here (works on every license). "retriever": one request with
+    # the Elasticsearch rrf retriever (needs a license tier that has it, falls back to "python").
+    rrf_mode: Literal["python", "retriever"] = "python"
+    num_candidates_factor: int = Field(3, ge=1)
+    max_top_k: int = Field(50, ge=1)
+    snippet_chars: int = Field(300, ge=50)
 
 
 class ElasticsearchSettings(BaseModel):
@@ -150,6 +156,24 @@ class BackfillSettings(BaseModel):
     skip_up_to_date: bool = True
     waves: list[WaveSpec] = []
     reconcile_max_items: int | None = Field(None, ge=1)
+
+
+class ApiSettings(BaseModel):
+    """Who may call the API, and how much (HLD sections 8 and 9)."""
+
+    # Service name to token. Tokens come from the secret store (APP_API__SERVICE_TOKENS as JSON).
+    service_tokens: dict[str, SecretStr] = {}
+    admin_tokens: dict[str, SecretStr] = {}
+    # Only these services may send the end-user identity headers (X-User-Id, X-User-Groups).
+    identity_services: list[str] = []
+    auth_disabled: bool = False  # local development and tests only. Refused in prod.
+    max_query_chars: int = Field(1000, ge=1)
+    max_groups: int = Field(200, ge=1)
+    max_filter_values: int = Field(50, ge=1)
+    rate_limit_user_per_min: int = Field(120, ge=0)  # 0 = off
+    rate_limit_service_per_min: int = Field(6000, ge=0)
+    # Calls on the request path must not wait for retries: the budget is 3 seconds in total.
+    request_retry: RetryPolicy = RetryPolicy(attempts=1)
 
 
 class KafkaSettings(BaseModel):
@@ -282,6 +306,7 @@ class Settings(BaseSettings):
     elasticsearch: ElasticsearchSettings
     source: SourceSettings = SourceSettings()
     store: StoreSettings = StoreSettings()
+    api: ApiSettings = ApiSettings()
     backfill: BackfillSettings = BackfillSettings()
     ingestion: IngestionSettings = IngestionSettings()
     normalizer: NormalizerSettings = NormalizerSettings()
@@ -294,6 +319,12 @@ class Settings(BaseSettings):
     llm: LlmSettings
     chunking: ChunkingSettings
     feature_flags: FeatureFlags = FeatureFlags()
+
+    @model_validator(mode="after")
+    def _prod_needs_auth(self) -> "Settings":
+        if self.env == "prod" and self.api.auth_disabled:
+            raise ValueError("api.auth_disabled is not allowed in prod")
+        return self
 
     @classmethod
     def settings_customise_sources(

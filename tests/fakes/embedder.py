@@ -41,6 +41,8 @@ class FakeEmbedder:
 
     async def embed_query(self, text: str) -> list[float]:
         """One vector for the query."""
+        if self.block is not None:
+            await self.block.wait()
         self._check()
         self.query_calls.append(text)
         return self._vector(text)

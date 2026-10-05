@@ -213,3 +213,32 @@ def model_server() -> Iterator[ModelServer]:
     yield ModelServer(f"http://127.0.0.1:{port}", 8)
     server.should_exit = True
     thread.join(timeout=5)
+
+
+@pytest.fixture(scope="session")
+def es_trial_url() -> Iterator[str]:
+    """Elasticsearch 8 with a trial license, so the rrf retriever is available."""
+    port = _free_port()
+    container = (
+        DockerContainer(ES_IMAGE)
+        .with_bind_ports(9200, port)
+        .with_env("discovery.type", "single-node")
+        .with_env("xpack.security.enabled", "false")
+        .with_env("xpack.ml.enabled", "false")
+        .with_env("xpack.license.self_generated.type", "trial")
+        .with_env("ES_JAVA_OPTS", "-Xms512m -Xmx512m")
+    )
+    with container:
+        url = f"http://127.0.0.1:{port}"
+        deadline = time.monotonic() + 120
+        while True:
+            try:
+                response = httpx.get(f"{url}/_cluster/health", params={"wait_for_status": "yellow"})
+                if response.status_code == 200:
+                    break
+            except httpx.HTTPError:
+                pass
+            if time.monotonic() > deadline:
+                raise RuntimeError("Elasticsearch did not become ready")
+            time.sleep(2)
+        yield url

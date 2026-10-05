@@ -7,6 +7,10 @@ image:
   tag: ""  # defaults to the chart appVersion
   pullPolicy: IfNotPresent
 
+# A Secret (from the secret store) with APP_API__SERVICE_TOKENS (JSON: service name to token),
+# APP_API__ADMIN_TOKENS, APP_API__IDENTITY_SERVICES (JSON list) and other keys. Never in values.
+secretName: ""
+
 # Environment variables for every mode, written to a ConfigMap. Nested settings use "__",
 # see src/app/core/settings.py. In prod the endpoints, the source index and the approved
 # model names must be set here: the service refuses to start without them.

@@ -72,6 +72,10 @@ class RateLimitedError(AppError):
     http_status = 429
     default_message = "Too many requests"
 
+    def __init__(self, message: str | None = None, retry_after_s: int = 1) -> None:
+        super().__init__(message)
+        self.retry_after_s = retry_after_s
+
 
 class UpstreamUnavailableError(AppError):
     """Model server, OpenAI or Elasticsearch is down."""

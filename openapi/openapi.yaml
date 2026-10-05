@@ -1,0 +1,292 @@
+components:
+  schemas:
+    ErrorBody:
+      description: Details of an error.
+      properties:
+        code:
+          title: Code
+          type: string
+        message:
+          title: Message
+          type: string
+        request_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Request Id
+      required:
+      - code
+      - message
+      title: ErrorBody
+      type: object
+    ErrorResponse:
+      description: 'The common error format. ``UPSTREAM_UNAVAILABLE`` and ``TIMEOUT``
+        make the caller fall
+
+        back.'
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+      required:
+      - error
+      title: ErrorResponse
+      type: object
+    SearchFilters:
+      additionalProperties: false
+      description: Optional filters. All of them are added next to the access filter,
+        never instead of it.
+      properties:
+        created_from:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Created From
+        created_to:
+          anyOf:
+          - format: date
+            type: string
+          - type: 'null'
+          title: Created To
+        doc_type:
+          items:
+            type: string
+          maxItems: 50
+          title: Doc Type
+          type: array
+        tags:
+          items:
+            type: string
+          maxItems: 50
+          title: Tags
+          type: array
+      title: SearchFilters
+      type: object
+    SearchRequest:
+      additionalProperties: false
+      description: '``POST /v1/search``.'
+      properties:
+        filters:
+          $ref: '#/components/schemas/SearchFilters'
+        group_by_document:
+          default: false
+          title: Group By Document
+          type: boolean
+        mode:
+          default: hybrid
+          enum:
+          - hybrid
+          - bm25
+          - vector
+          title: Mode
+          type: string
+        query:
+          maxLength: 4000
+          minLength: 1
+          title: Query
+          type: string
+        rerank:
+          anyOf:
+          - type: boolean
+          - type: 'null'
+          title: Rerank
+        top_k:
+          anyOf:
+          - maximum: 200.0
+            minimum: 1.0
+            type: integer
+          - type: 'null'
+          title: Top K
+      required:
+      - query
+      title: SearchRequest
+      type: object
+    SearchResponse:
+      description: The answer of ``POST /v1/search``. ``mode_used`` says which search
+        really ran.
+      properties:
+        mode_used:
+          title: Mode Used
+          type: string
+        request_id:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Request Id
+        results:
+          items:
+            $ref: '#/components/schemas/SearchResultItem'
+          title: Results
+          type: array
+        took_ms:
+          title: Took Ms
+          type: integer
+      required:
+      - request_id
+      - mode_used
+      - results
+      - took_ms
+      title: SearchResponse
+      type: object
+    SearchResultItem:
+      description: One found chunk. No chunk text beyond the snippet.
+      properties:
+        chunk_id:
+          title: Chunk Id
+          type: string
+        doc_id:
+          title: Doc Id
+          type: string
+        highlights:
+          items:
+            type: string
+          title: Highlights
+          type: array
+        pages:
+          items:
+            type: integer
+          title: Pages
+          type: array
+        score:
+          title: Score
+          type: number
+        snippet:
+          title: Snippet
+          type: string
+      required:
+      - doc_id
+      - chunk_id
+      - score
+      - pages
+      - snippet
+      - highlights
+      title: SearchResultItem
+      type: object
+  securitySchemes:
+    adminToken:
+      description: Admin token.
+      scheme: bearer
+      type: http
+    serviceToken:
+      description: Service-to-service token. mTLS is enforced at the ingress.
+      scheme: bearer
+      type: http
+info:
+  title: Semantic Search Service
+  version: 0.2.0
+openapi: 3.1.0
+paths:
+  /health/live:
+    get:
+      description: Liveness probe.
+      operationId: live_health_live_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties:
+                  type: string
+                title: Response Live Health Live Get
+                type: object
+          description: Successful Response
+      security: []
+      summary: Live
+      tags:
+      - health
+  /health/ready:
+    get:
+      description: Readiness probe. 503 before startup has finished and during shutdown.
+      operationId: ready_health_ready_get
+      responses:
+        '200':
+          content:
+            application/json:
+              schema: {}
+          description: Successful Response
+      security: []
+      summary: Ready
+      tags:
+      - health
+  /v1/search:
+    post:
+      description: Hybrid search within the rights of the user. Never returns what
+        the user may not open.
+      operationId: search_v1_search_post
+      parameters:
+      - description: The end user. Accepted only from a service that is allowed to
+          send it.
+        in: header
+        name: X-User-Id
+        required: true
+        schema:
+          maxLength: 256
+          type: string
+      - description: Comma separated groups of the end user.
+        in: header
+        name: X-User-Groups
+        required: false
+        schema:
+          type: string
+      - description: Trace ID. Returned in the response and passed to all downstream
+          calls.
+        in: header
+        name: X-Request-Id
+        required: false
+        schema:
+          maxLength: 128
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SearchResponse'
+          description: Successful Response
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Bad Request
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Unauthorized
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Forbidden
+        '429':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Too Many Requests
+        '503':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Service Unavailable
+        '504':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Gateway Timeout
+      security:
+      - serviceToken: []
+      summary: Search
+      tags:
+      - search
